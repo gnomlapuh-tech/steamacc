@@ -31,12 +31,6 @@ function lsSetJson(key, val){ return lsSet(key, JSON.stringify(val)); }
 
 /* ============================================================
  * Cash draft (UG-WEB-04)
- * ------------------------------------------------------------
- * Черновик ввода полей «Касса». Хранится отдельно от shift.day/night,
- * не влияет на семантику кнопки «Сохранить» и бейджа «сохранено».
- * Ключ: ug:cash_draft
- * Структура: { day: {revenue,terminal,cash,sbp}, night: {...} }
- * Значения — строки «как ввёл пользователь». Пустые поля не пишем.
  * ============================================================ */
 
 var TG_CASH_DRAFT_KEY = "cash_draft";
@@ -536,10 +530,17 @@ function normalizeShift(s){
   if(!s || typeof s !== "object") return null;
   var date = String(s.date || "").slice(0, 10);
   if(!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+  /* [UG-WEB-07][iter4] closed_at: null — открытая смена, ISO-строка — закрытая.
+     Поле необязательное: старые смены без него читаются как открытые. */
+  var closedAt = null;
+  if(s.closed_at !== null && s.closed_at !== undefined && s.closed_at !== "" && s.closed_at !== "null"){
+    closedAt = String(s.closed_at);
+  }
   return {
     id: Math.max(0, Math.floor(Number(s.id) || 0)),
     date: date,
     created_at: (s.created_at === null || s.created_at === undefined || s.created_at === "") ? new Date().toISOString() : String(s.created_at),
+    closed_at: closedAt,
     day: normalizeShiftPart(s.day),
     night: normalizeShiftPart(s.night)
   };
@@ -1221,7 +1222,28 @@ function computeShiftTotal(shift){
   return { revenue: revenue, terminal: terminal, cash: cash, sbp: sbp, langame: langame, check_sum: check_sum, check_ok: check_ok, bothFilled: bothFilled, day: day, night: night };
 }
 
-function findTodayShift(){ return findShiftByDate(todayISO()); }
+/* [UG-WEB-07][iter4] Текущая смена — последняя по created_at (id) смена
+   без closed_at, у которой date === todayISO(). Вчерашние незакрытые
+   не считаются текущими — защита от «залипания» после переезда через полночь. */
+function findCurrentShift(){
+  var today = todayISO();
+  var best = null;
+  for(var i=0;i<shifts.length;i++){
+    var s = shifts[i];
+    if(!s) continue;
+    if(s.closed_at) continue;
+    if(s.date !== today) continue;
+    if(!best){ best = s; continue; }
+    var bt = best.created_at ? Date.parse(best.created_at) : 0; if(isNaN(bt)) bt = 0;
+    var st = s.created_at ? Date.parse(s.created_at) : 0; if(isNaN(st)) st = 0;
+    if(st > bt){ best = s; continue; }
+    if(st === bt && (s.id || 0) > (best.id || 0)) best = s;
+  }
+  return best;
+}
+
+/* [UG-WEB-07][iter4] findTodayShift теперь возвращает именно текущую смену. */
+function findTodayShift(){ return findCurrentShift(); }
 function findShiftByDate(dateISO){ return shifts.filter(function(s){ return s.date === dateISO; })[0] || null; }
 
 function formatMoney(n){
@@ -1242,7 +1264,6 @@ function shiftReportText(kind, part, dateISO){
   lines.push("Терминал — " + formatMoney(part.terminal) + " ₽");
   lines.push("LanGame — " + formatMoney(part.langame) + " ₽");
   lines.push("Наличные — " + formatMoney(part.cash) + " ₽");
-  /* [UG-WEB-05][iter3] Пользовательское название «Безнал». Ключ данных — sbp, не меняется. */
   lines.push("Безнал — " + formatMoney(part.sbp) + " ₽");
   lines.push("Проверка: " + (part.check_ok ? "✓ сошлось" : "✗ не сходится"));
   return lines.join("\n");
@@ -1258,7 +1279,6 @@ function shiftTotalReportText(shift){
   lines.push("Терминал — " + formatMoney(t.terminal) + " ₽");
   lines.push("LanGame — " + formatMoney(t.langame) + " ₽");
   lines.push("Наличные — " + formatMoney(t.cash) + " ₽");
-  /* [UG-WEB-05][iter3] Пользовательское название «Безнал». Ключ данных — sbp, не меняется. */
   lines.push("Безнал — " + formatMoney(t.sbp) + " ₽");
   var mark = t.check_ok ? "✓ сошлось" : "✗ не сходится";
   if(!t.bothFilled){ mark += " (не все части заполнены)"; }
@@ -1271,7 +1291,6 @@ function renderShiftPartBlock(shift, partKey){
   var title = partKey === "day" ? "День" : "Ночь";
   if(part){
     var c = computeShiftPart(part);
-    /* [UG-WEB-06][iter3] Визуальный индикатор — цветной кружок вместо ✓/✗. */
     var mark = c.check_ok ? "<span class=\"mark-dot ok\"></span>" : "<span class=\"mark-dot err\"></span>";
     return "" +
       "<div class=\"shift-block\">" +
@@ -1284,14 +1303,11 @@ function renderShiftPartBlock(shift, partKey){
           "<div class=\"sum-line\"><span class=\"k\">Терминал</span><span class=\"v\">" + formatMoney(c.terminal) + " ₽</span></div>" +
           "<div class=\"sum-line\"><span class=\"k\">LanGame</span><span class=\"v\">" + formatMoney(c.langame) + " ₽</span></div>" +
           "<div class=\"sum-line\"><span class=\"k\">Наличные</span><span class=\"v\">" + formatMoney(c.cash) + " ₽</span></div>" +
-          /* [UG-WEB-05][iter3] «Оплата по СБП» → «Безнал». */
           "<div class=\"sum-line\"><span class=\"k\">Безнал</span><span class=\"v\">" + formatMoney(c.sbp) + " ₽</span></div>" +
           "<div class=\"sum-line\"><span class=\"k\">Проверка</span><span class=\"v\">" + formatMoney(c.check_sum) + " ₽ " + mark + "</span></div>" +
         "</div>" +
       "</div>";
   }
-  /* [UG-WEB-04][iter2] Подстановка значений из черновика ug:cash_draft
-     (если он есть) в инпуты несозданной части смены. */
   var vRev = cashDraftFieldValue(partKey, "revenue");
   var vTerm = cashDraftFieldValue(partKey, "terminal");
   var vCash = cashDraftFieldValue(partKey, "cash");
@@ -1305,7 +1321,6 @@ function renderShiftPartBlock(shift, partKey){
         "<div class=\"shift-field\"><label>Выручка *</label><input id=\"cash_" + partKey + "_revenue\" type=\"number\" inputmode=\"decimal\" value=\"" + (vRev != null ? esc(vRev) : "") + "\" oninput=\"updateCashDerived('" + partKey + "')\"></div>" +
         "<div class=\"shift-field\"><label>Терминал *</label><input id=\"cash_" + partKey + "_terminal\" type=\"number\" inputmode=\"decimal\" value=\"" + (vTerm != null ? esc(vTerm) : "") + "\" oninput=\"updateCashDerived('" + partKey + "')\"></div>" +
         "<div class=\"shift-field\"><label>Наличные *</label><input id=\"cash_" + partKey + "_cash\" type=\"number\" inputmode=\"decimal\" value=\"" + (vCash != null ? esc(vCash) : "") + "\" oninput=\"updateCashDerived('" + partKey + "')\"></div>" +
-        /* [UG-WEB-05][iter3] «Оплата по СБП» → «Безнал». id не меняем — на нём завязан черновик и сохранение. */
         "<div class=\"shift-field\"><label>Безнал</label><input id=\"cash_" + partKey + "_sbp\" type=\"number\" inputmode=\"decimal\" value=\"" + (vSbp != null ? esc(vSbp) : "") + "\" oninput=\"updateCashDerived('" + partKey + "')\"></div>" +
       "</div>" +
       "<div style=\"margin-top:10px\" id=\"cash_derived_" + partKey + "\"></div>" +
@@ -1323,18 +1338,15 @@ function updateCashDerived(partKey){
   var langame = sbp - term;
   var check_sum = term + langame + cash;
   var ok = (rev === check_sum);
-  /* [UG-WEB-06][iter3] Живой расчёт — тоже кружок. */
   var mark = ok ? "<span class=\"mark-dot ok\"></span>" : "<span class=\"mark-dot err\"></span>";
   var host = document.getElementById("cash_derived_" + partKey);
   if(!host) return;
   host.innerHTML =
     "<div class=\"shift-derived\"><span class=\"lbl\">LanGame</span><span class=\"val\">" + formatMoney(langame) + " ₽</span></div>" +
     "<div class=\"shift-derived\" style=\"margin-top:6px\"><span class=\"lbl\">Проверка (Терминал + LanGame + Наличные)</span><span class=\"val " + (ok ? "ok" : "err") + "\">" + formatMoney(check_sum) + " ₽ <span class=\"shift-check\">" + mark + "</span></span></div>";
-  /* [UG-WEB-04][iter2] Сохраняем введённое в ug:cash_draft. */
   persistCashInputs();
 }
 
-/* [UG-WEB-03][iter1] Кнопка «Отправить отчёт в Telegram». */
 function renderTelegramSendButton(scope){
   var url = telegramWorkerUrl();
   var dis = url ? "" : " disabled";
@@ -1357,7 +1369,6 @@ function renderCashPage(){
   if(shift && shift.day && shift.night){
     var reportText = shiftTotalReportText(shift);
     var t = computeShiftTotal(shift);
-    /* [UG-WEB-06][iter3] Заголовок итога — тоже кружок. */
     var mark = t && t.check_ok ? "<span class=\"mark-dot ok\"></span>" : "<span class=\"mark-dot err\"></span>";
     html += "<div class=\"shift-block\">" +
       "<div class=\"shift-block-head\">" +
@@ -1420,19 +1431,24 @@ function saveCashPart(partKey){
     sbp: sbpRaw === "" ? 0 : (Number(sbpRaw) || 0),
     saved_at: new Date().toISOString()
   };
-  var today = todayISO();
-  var shift = findTodayShift();
+  /* [UG-WEB-07][iter4] Берём текущую (незакрытую сегодняшнюю) смену.
+     Если её нет — создаём новую с явным closed_at: null. */
+  var shift = findCurrentShift();
   if(!shift){
     var nid = 0; shifts.forEach(function(s){ if(s.id >= nid) nid = s.id+1; });
     if(nid === 0) nid = 1;
-    shift = { id: nid, date: today, created_at: new Date().toISOString(), day: null, night: null };
+    shift = { id: nid, date: todayISO(), created_at: new Date().toISOString(), closed_at: null, day: null, night: null };
     shifts.push(shift);
   }
   shift[partKey] = part;
   persistShifts();
-  /* [UG-WEB-04][iter2] Черновик этой части больше не нужен. */
+  /* [UG-WEB-07][iter4] Если теперь заполнены обе части — закрываем смену. */
+  if(shift.day && shift.night && !shift.closed_at){
+    shift.closed_at = new Date().toISOString();
+    persistShifts();
+  }
   clearCashDraftPart(partKey);
-  addLog((partKey === "day" ? "Касса: день сохранён " : "Касса: ночь сохранена ") + fmtDateRu(today) + " (" + formatMoney(part.revenue) + " ₽)", "info");
+  addLog((partKey === "day" ? "Касса: день сохранён " : "Касса: ночь сохранена ") + fmtDateRu(shift.date) + " (" + formatMoney(part.revenue) + " ₽)", "info");
   toast(partKey === "day" ? "День сохранён" : "Ночь сохранена", "ok");
   renderRoute();
 }
@@ -1449,7 +1465,6 @@ function openShiftPartEditor(partKey, dateISO){
   html += "<div class=\"shift-field\"><label>Выручка *</label><input id=\"edit_part_revenue\" type=\"number\" value=\"" + p.revenue + "\"></div>";
   html += "<div class=\"shift-field\"><label>Терминал *</label><input id=\"edit_part_terminal\" type=\"number\" value=\"" + p.terminal + "\"></div>";
   html += "<div class=\"shift-field\"><label>Наличные *</label><input id=\"edit_part_cash\" type=\"number\" value=\"" + p.cash + "\"></div>";
-  /* [UG-WEB-05][iter3] «Оплата по СБП» → «Безнал». */
   html += "<div class=\"shift-field\"><label>Безнал</label><input id=\"edit_part_sbp\" type=\"number\" value=\"" + p.sbp + "\"></div>";
   html += "</div>";
   html += "<div class=\"modal-actions\"><button class=\"btn btn-ghost\" onclick=\"closeModal()\">Отмена</button>";
@@ -1479,6 +1494,11 @@ function saveShiftPart(partKey, dateISO){
     sbp: sbpRaw === "" ? 0 : (Number(sbpRaw) || 0),
     saved_at: new Date().toISOString()
   };
+  /* [UG-WEB-07][iter4] Правка существующей смены не «открывает» закрытую,
+     но если обе части есть и closed_at пуст — закрываем. */
+  if(shift.day && shift.night && !shift.closed_at){
+    shift.closed_at = new Date().toISOString();
+  }
   persistShifts();
   addLog("Касса: " + (partKey === "day" ? "день" : "ночь") + " обновлена за " + fmtDateRu(dateISO), "info");
   closeModal();
@@ -1513,7 +1533,6 @@ function renderShiftHistory(){
   shifts.forEach(function(s){
     var t = computeShiftTotal(s);
     var revText = t ? (formatMoney(t.revenue) + " ₽") : "—";
-    /* [UG-WEB-06][iter3] История смен — цветной кружок вместо ✓/✗/·. */
     var mark = "";
     if(!t){ mark = "<span class=\"mark-dot muted\"></span>"; }
     else if(!t.bothFilled){ mark = "<span class=\"mark-dot muted\"></span>"; }
@@ -1564,7 +1583,6 @@ function deleteShift(dateISO){
     cb: function(){
       shifts = shifts.filter(function(s){ return s.date !== dateISO; });
       persistShifts();
-      /* [UG-WEB-04][iter2] Черновик мог относиться к удаляемой смене — сбрасываем. */
       clearCashDraftAll();
       addLog("Касса: смена удалена " + fmtDateRu(dateISO), "warn");
       closeModal();
@@ -1693,7 +1711,6 @@ function renderSettingsPage(){
   html += "<button class=\"btn btn-ghost menu-action\" onclick=\"openCategoryManager()\">" + icoWrap(ICO.folder) + " Управление категориями</button>";
   html += "</div>";
 
-  /* [UG-WEB-03][iter1] Блок Telegram. */
   var tgUrl = telegramWorkerUrl();
   html += "<div class=\"field\"><label>Telegram — отправка отчётов</label>";
   html += "<div class=\"issue-hint\">" + icoWrap(ICO.info) + "<div>Вставьте URL вашего Cloudflare Worker'а (например, " + esc(TG_WORKER_HOST_HINT) + "). Хост должен совпадать с <code>connect-src</code> в CSP. Токен бота здесь не хранится.</div></div>";
@@ -2129,6 +2146,8 @@ function mergeShiftsByDate(inShifts, mode){
     if(existing){
       existing.day = n.day;
       existing.night = n.night;
+      /* [UG-WEB-07][iter4] Перенос closed_at при импорте, если он есть. */
+      if(n.closed_at) existing.closed_at = n.closed_at;
     } else {
       var nid = 0; shifts.forEach(function(x){ if(x.id >= nid) nid = x.id+1; });
       if(nid === 0) nid = 1;
@@ -2175,7 +2194,6 @@ function applyImport(imported, logIn, inCats, inShifts, mode){
   _prevVisibleIds = new Set();
   if(logIn){ actionLog = logIn; saveActionLog(); }
   persist();
-  /* [UG-WEB-04][iter2] При «замене всего» черновик кассы не имеет смысла. */
   if(mode === "replace") clearCashDraftAll();
   closeModal(); renderRoute(); scheduleExpireCheck();
   if(mode === "merge"){ toast("Добавлено: " + added + ", обновлено: " + updated, "ok"); addLog("Импорт (слияние): добавлено " + added + ", обновлено " + updated, "info"); }
@@ -2240,7 +2258,6 @@ function rollbackSnap(){
       persistShifts();
     }
     rebuildAccountIndex(); persist();
-    /* [UG-WEB-04][iter2] Черновик кассы при откате снимка не имеет смысла. */
     clearCashDraftAll();
     addLog("Откат: " + sn.label, "warn");
     closeModal(); renderRoute(); scheduleExpireCheck(); toast("Данные восстановлены", "ok");
@@ -2437,7 +2454,6 @@ window.addEventListener("storage", function(e){
     if(currentRoute === "settings" || currentRoute === "cash") renderRoute();
     return;
   }
-  /* [UG-WEB-04][iter2] Синхронизация черновика кассы между вкладками. */
   if(e.key === "ug:cash_draft"){
     if(currentRoute === "cash") renderRoute();
     return;
