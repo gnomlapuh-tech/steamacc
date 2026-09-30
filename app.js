@@ -269,7 +269,7 @@ function checkTelegramWorker(btnEl){
   function finish(ok, msg){
     if(timer){ clearTimeout(timer); timer = null; }
     if(didTimeout && !ok) return;
-    if(btnEl){ btnEl.disabled = false; btnEl.textContent = orig || "Проверить связь"; }
+    if(btnEl){ btnEl.disabled = false; btnEl.textContent = orig || "Проверить связь"; if(ok) btnEl.removeAttribute("data-state"); else btnEl.setAttribute("data-state", "error"); }
     if(ok){ toast("Связь с Worker'ом есть", "ok"); addLog("Telegram: связь с Worker'ом проверена", "ok"); }
     else { toast("Нет связи: " + (msg || "ошибка"), "err"); addLog("Telegram: нет связи с Worker'ом", "error"); }
   }
@@ -928,7 +928,7 @@ function renderList(){
     html += "<button class=\"btn btn-success\" style=\"margin-top:18px\" onclick=\"openEdit(null)\">" + icoWrap(ICO.check) + " Добавить аккаунт</button>";
     html += "</div>";
   } else if(visible.length === 0){
-    html += "<div class=\"empty\"><span class=\"ico-empty\">" + ICO.search_empty + "</span><div>Ничего не найдено</div></div>";
+    html += "<div class=\"empty\"><span class=\"ico-empty\">" + ICO.search_empty + "</span><div>Ничего не найдено</div><div class=\"hint\">Измените запрос или сбросьте фильтры.</div></div>";
   } else {
     if(tableMode()) html += renderTable(visible); else { html += "<div class=\"cards\">"; visible.forEach(function(a){ html += renderCard(a); }); html += "</div>"; }
   }
@@ -1207,7 +1207,7 @@ function showStorageWarn(msg){
   _storageWarnedAt = now;
   var host = document.getElementById("storageWarn");
   if(!host) return;
-  host.innerHTML = "<div class='storage-warn' role='alert'><div class='sw-title'>" + icoWrap(ICO.info) + " Хранилище недоступно</div><div class='sw-text'>" + esc(msg || "Данные не сохраняются между перезагрузками. Разрешите localStorage для этого сайта.") + "</div><button class='btn btn-ghost sw-btn' onclick=\"dismissStorageWarn()\">Понятно</button></div>";
+  host.innerHTML = "<div class='storage-warn' role='alert' aria-live='assertive'><div class='sw-title'>" + icoWrap(ICO.info) + " Хранилище недоступно</div><div class='sw-text'>" + esc(msg || "Данные не сохраняются между перезагрузками. Разрешите localStorage для этого сайта.") + "</div><button class='btn btn-ghost sw-btn' onclick=\"dismissStorageWarn()\">Понятно</button></div>";
 }
 
 /* ============================================================
@@ -1334,6 +1334,11 @@ function shiftTotalReportText(shift){
   return lines.join("\n");
 }
 
+function checkIndicator(c){
+  if(!c) return '<span class="check-ind muted"><span class="mark-dot muted"></span>Ожидает проверки</span>';
+  if(c.check_ok) return '<span class="check-ind ok"><span class="mark-dot ok"></span>Сходится</span>';
+  return '<span class="check-ind err"><span class="mark-dot err"></span>Расхождение · ' + formatMoney(Math.abs((Number(c.revenue) || 0) - (Number(c.check_sum) || 0))) + ' ₽</span>';
+}
 function renderShiftPartBlock(shift, partKey){
   var part = shift ? shift[partKey] : null;
   var title = partKey === "day" ? "День" : "Ночь";
@@ -1352,7 +1357,7 @@ function renderShiftPartBlock(shift, partKey){
           "<div class=\"sum-line\"><span class=\"k\">LanGame</span><span class=\"v\">" + formatMoney(c.langame) + " ₽</span></div>" +
           "<div class=\"sum-line\"><span class=\"k\">Наличные</span><span class=\"v\">" + formatMoney(c.cash) + " ₽</span></div>" +
           "<div class=\"sum-line\"><span class=\"k\">Безнал</span><span class=\"v\">" + formatMoney(c.sbp) + " ₽</span></div>" +
-          "<div class=\"sum-line\"><span class=\"k\">Проверка</span><span class=\"v\">" + formatMoney(c.check_sum) + " ₽ " + mark + "</span></div>" +
+          "<div class=\"sum-line\"><span class=\"k\">Проверка</span><span class=\"v\">" + formatMoney(c.check_sum) + " ₽ " + checkIndicator(c) + "</span></div>" +
         "</div>" +
       "</div>";
   }
@@ -1386,12 +1391,13 @@ function updateCashDerived(partKey){
   var langame = sbp - term;
   var check_sum = term + langame + cash;
   var ok = (rev === check_sum);
+  var empty = !(rev || term || cash || sbp);
   var mark = ok ? "<span class=\"mark-dot ok\"></span>" : "<span class=\"mark-dot err\"></span>";
   var host = document.getElementById("cash_derived_" + partKey);
   if(!host) return;
   host.innerHTML =
     "<div class=\"shift-derived\"><span class=\"lbl\">LanGame</span><span class=\"val\">" + formatMoney(langame) + " ₽</span></div>" +
-    "<div class=\"shift-derived\" style=\"margin-top:6px\"><span class=\"lbl\">Проверка (Терминал + LanGame + Наличные)</span><span class=\"val " + (ok ? "ok" : "err") + "\">" + formatMoney(check_sum) + " ₽ <span class=\"shift-check\">" + mark + "</span></span></div>";
+    "<div class=\"shift-derived\" style=\"margin-top:6px\"><span class=\"lbl\">Проверка (Терминал + LanGame + Наличные)</span><span class=\"val " + (ok ? "ok" : "err") + "\">" + formatMoney(check_sum) + " ₽ " + checkIndicator(empty ? null : { check_ok: ok, revenue: rev, check_sum: check_sum }) + "</span></div>";
   persistCashInputs();
 }
 
@@ -1407,50 +1413,22 @@ function renderTelegramSendButton(scope){
 function renderCashPage(){
   var today = todayISO();
   var shift = findTodayShift();
-  var html = "";
-  html += "<div class=\"cash-title\">Касса</div>";
-  html += "<div class=\"cash-date\">Сегодня: " + fmtDateRu(today) + "</div>";
-
-  html += renderShiftPartBlock(shift, "day");
-  html += renderShiftPartBlock(shift, "night");
-
+  var html = '<div class="cash-title">Касса</div><div class="cash-date">Сегодня: ' + fmtDateRu(today) + '</div>';
+  html += '<div class="cash-grid"><div class="cash-col">' + renderShiftPartBlock(shift, "day") + '</div><div class="cash-col">' + renderShiftPartBlock(shift, "night") + '</div><div class="cash-side">';
   if(shift && shift.day && shift.night){
-    var reportText = shiftTotalReportText(shift);
     var t = computeShiftTotal(shift);
-    var mark = t && t.check_ok ? "<span class=\"mark-dot ok\"></span>" : "<span class=\"mark-dot err\"></span>";
-    html += "<div class=\"shift-block\">" +
-      "<div class=\"shift-block-head\">" +
-        "<div class=\"shift-block-title\">Итог за сутки " + mark + "</div>" +
-      "</div>" +
-      "<div class=\"shift-report\">" + esc(reportText) + "</div>" +
-      "<div class=\"modal-actions\" style=\"margin-top:12px\">" +
-        "<button class=\"btn btn-ghost\" onclick=\"copyShiftReport('total')\">Скопировать отчёт</button>" +
-      "</div>" +
-      renderTelegramSendButton("total") +
-    "</div>";
+    var dayC = computeShiftPart(shift.day), nightC = computeShiftPart(shift.night);
+    html += '<div class="bento"><div class="bento-label">Итог за сутки</div>' +
+      '<div class="bento-total">' + formatMoney(t.revenue) + ' ₽</div>' +
+      '<div class="bento-split"><div><span>День</span><b>' + formatMoney(dayC.revenue) + ' ₽</b></div><div><span>Ночь</span><b>' + formatMoney(nightC.revenue) + ' ₽</b></div></div>' +
+      '<div class="bento-check">' + checkIndicator(t) + '</div>' +
+      '<div class="bento-actions"><button class="btn btn-ghost" onclick="copyShiftReport(\'total\')">' + icoWrap(ICO.copy) + ' Скопировать отчёт</button>' + renderTelegramSendButton("total") + '</div></div>';
   } else if(shift && (shift.day || shift.night)){
-    var reportText2 = shift.day
-      ? shiftReportText("day", computeShiftPart(shift.day), shift.date)
-      : shiftReportText("night", computeShiftPart(shift.night), shift.date);
-    html += "<div class=\"shift-block\">" +
-      "<div class=\"shift-block-head\">" +
-        "<div class=\"shift-block-title\">Отчёт</div>" +
-      "</div>" +
-      "<div class=\"shift-report\">" + esc(reportText2) + "</div>" +
-      "<div class=\"modal-actions\" style=\"margin-top:12px\">" +
-        "<button class=\"btn btn-ghost\" onclick=\"copyShiftReport('single')\">Скопировать отчёт</button>" +
-      "</div>" +
-      renderTelegramSendButton("single") +
-    "</div>";
+    var reportText2 = shift.day ? shiftReportText("day", computeShiftPart(shift.day), shift.date) : shiftReportText("night", computeShiftPart(shift.night), shift.date);
+    html += '<div class="shift-block"><div class="shift-block-head"><div class="shift-block-title">Отчёт</div></div><div class="shift-report">' + esc(reportText2) + '</div>' +
+      '<div class="modal-actions" style="margin-top:12px"><button class="btn btn-ghost" onclick="copyShiftReport(\'single\')">Скопировать отчёт</button></div>' + renderTelegramSendButton("single") + '</div>';
   }
-
-  html += "<div class=\"shift-block\">" +
-    "<div class=\"shift-block-head\">" +
-      "<div class=\"shift-block-title\">История смен</div>" +
-    "</div>" +
-    renderShiftHistory() +
-  "</div>";
-
+  html += '<div class="shift-block"><div class="shift-block-head"><div class="shift-block-title">История смен</div></div>' + renderShiftHistory() + '</div></div></div>';
   return html;
 }
 
@@ -1579,16 +1557,12 @@ function copyShiftReport(kind){
  * ============================================================ */
 
 function renderShiftHistory(){
-  if(!shifts.length) return "<div class=\"shift-empty-list\">Пока нет смен</div>";
+  if(!shifts.length) return "<div class=\"shift-empty-list\"><span class=\"ico-empty\">" + ICO.history.replace("width='20' height='20'", "width='44' height='44'") + "</span><div>Пока нет смен</div></div>";
   var html = "<div class=\"shift-list\">";
   shifts.forEach(function(s){
     var t = computeShiftTotal(s);
     var revText = t ? (formatMoney(t.revenue) + " ₽") : "—";
-    var mark = "";
-    if(!t){ mark = "<span class=\"mark-dot muted\"></span>"; }
-    else if(!t.bothFilled){ mark = "<span class=\"mark-dot muted\"></span>"; }
-    else if(t.check_ok){ mark = "<span class=\"mark-dot ok\"></span>"; }
-    else { mark = "<span class=\"mark-dot err\"></span>"; }
+    var mark = checkIndicator((t && t.bothFilled) ? t : null);
     var suffix = (t && !t.bothFilled) ? " <span style=\"color:var(--text-3);font-size:11px\">(не все части заполнены)</span>" : "";
     html += "<div class=\"shift-list-item\" onclick=\"openShiftDetail('" + s.date + "')\">" +
       "<div class=\"sli-date\">" + esc(fmtDateRu(s.date)) + suffix + "</div>" +
@@ -1648,46 +1622,24 @@ function deleteShift(dateISO){
  * ============================================================ */
 
 function renderHistoryPage(){
-  var html = "";
-  html += "<div class=\"section-head\"><div class=\"title\">История</div></div>";
-
+  var html = '<div class="section-head"><div class="title">История</div></div>';
   if(actionLog.length === 0){
-    html += "<div class=\"empty\"><span class=\"ico-empty\">" + ICO.empty + "</span><div>Пока ничего не происходило</div></div>";
-    return html;
+    return html + '<div class="empty"><span class="ico-empty">' + ICO.history.replace("width='20' height='20'", "width='64' height='64'") + '</span><div>Пока ничего не происходило</div><div class="hint">Здесь появятся выдачи, баны и другие события.</div></div>';
   }
-
-  html += "<div class=\"field\"><label>Тип события</label>";
-  html += "<select class=\"sort-select\" onchange=\"historyFilterKind=this.value;renderHistoryList()\">";
-  html += "<option value=\"all\"" + (historyFilterKind === "all" ? " selected" : "") + ">Все</option>";
-  html += "<option value=\"info\"" + (historyFilterKind === "info" ? " selected" : "") + ">Информация</option>";
-  html += "<option value=\"ok\"" + (historyFilterKind === "ok" ? " selected" : "") + ">Успех</option>";
-  html += "<option value=\"warn\"" + (historyFilterKind === "warn" ? " selected" : "") + ">Предупреждение</option>";
-  html += "<option value=\"error\"" + (historyFilterKind === "error" ? " selected" : "") + ">Ошибки</option>";
-  html += "</select></div>";
-
-  html += "<div class=\"field\"><label>Аккаунт</label>";
-  html += "<select class=\"sort-select\" onchange=\"historyFilterAccId=this.value;renderHistoryList()\">";
-  html += "<option value=\"all\">Все</option>";
+  function opt(v, l, cur){ return '<option value="' + v + '"' + (cur === v ? " selected" : "") + '>' + l + '</option>'; }
+  html += '<div class="hist-toolbar"><div class="field"><label>Тип события</label><select class="sort-select" aria-label="Тип события" onchange="historyFilterKind=this.value;renderHistoryList()">' +
+    opt("all","Все",historyFilterKind) + opt("info","Информация",historyFilterKind) + opt("ok","Успех",historyFilterKind) + opt("warn","Предупреждение",historyFilterKind) + opt("error","Ошибки",historyFilterKind) + '</select></div>';
+  html += '<div class="field"><label>Аккаунт</label><select class="sort-select" aria-label="Аккаунт" onchange="historyFilterAccId=this.value;renderHistoryList()"><option value="all">Все</option>';
   var accIds = {};
   actionLog.forEach(function(h){ if(h && h.accId){ accIds[String(h.accId)] = true; } });
   var accList = [];
-  Object.keys(accIds).forEach(function(id){
-    var a = getAccount(id);
-    if(a) accList.push({ id: id, name: a.name || ("#" + id) });
-  });
+  Object.keys(accIds).forEach(function(id){ var a = getAccount(id); if(a) accList.push({ id: id, name: a.name || ("#" + id) }); });
   accList.sort(function(x, y){ return (x.name||"").localeCompare(y.name||"", undefined, { numeric:true, sensitivity:"base" }); });
-  accList.forEach(function(x){
-    html += "<option value=\"" + esc(x.id) + "\"" + (historyFilterAccId === String(x.id) ? " selected" : "") + ">" + esc(x.name) + "</option>";
-  });
-  html += "</select></div>";
-
-  html += "<div id=\"historyListZone\"></div>";
-
-  html += "<div class=\"modal-actions\">";
-  html += "<button class=\"btn btn-ghost\" onclick=\"exportActionLog()\">" + icoWrap(ICO.down) + " Экспорт журнала</button>";
-  html += "<button class=\"btn btn-danger\" onclick=\"clearLog()\">" + icoWrap(ICO.trash) + " Очистить</button>";
-  html += "</div>";
-  return html;
+  accList.forEach(function(x){ html += '<option value="' + esc(x.id) + '"' + (historyFilterAccId === String(x.id) ? " selected" : "") + '>' + esc(x.name) + '</option>'; });
+  html += '</select></div><div class="hist-actions">' +
+    '<button class="btn btn-ghost" onclick="exportActionLog()">' + icoWrap(ICO.down) + ' Экспорт журнала</button>' +
+    '<button class="btn btn-danger" onclick="clearLog()">' + icoWrap(ICO.trash) + ' Очистить</button></div></div>';
+  return html + '<div id="historyListZone"></div>';
 }
 
 function renderHistoryList(){
@@ -1695,8 +1647,7 @@ function renderHistoryList(){
   if(!host) return;
   var filtered = actionLog.filter(function(h){
     if(!h) return false;
-    var text = String(h.text||"");
-    var cls = histKind(text, h.kind);
+    var cls = histKind(String(h.text||""), h.kind);
     var k = cls === "ok" ? "ok" : cls === "warn" ? "warn" : cls === "danger" ? "error" : "info";
     if(historyFilterKind !== "all" && k !== historyFilterKind) return false;
     if(historyFilterAccId !== "all"){
@@ -1706,16 +1657,16 @@ function renderHistoryList(){
     return true;
   });
   if(filtered.length === 0){
-    host.innerHTML = "<div class=\"empty\" style=\"padding:32px 20px\"><div>Нет событий по выбранному фильтру</div></div>";
+    host.innerHTML = '<div class="empty" style="padding:32px 20px"><div>Нет событий по выбранному фильтру</div></div>';
     return;
   }
-  var html = "<div class=\"history-list\">";
+  var html = '<div class="hist-table" role="table"><div class="hist-row hist-head" role="row"><span></span><span>Время</span><span>Событие</span><span>Аккаунт</span></div>';
   filtered.forEach(function(h){
-    var text = String(h.text||""); var cls = histKind(text, h.kind);
-    html += "<div class=\"hist-item " + cls + "\"><div class=\"hist-dot\"></div><div><div class=\"htime\">" + esc(h.t) + "</div><div class=\"htext\">" + esc(text) + "</div></div></div>";
+    var cls = histKind(String(h.text||""), h.kind);
+    var acc = (h.accId !== null && h.accId !== undefined && h.accId !== "") ? getAccount(h.accId) : null;
+    html += '<div class="hist-row ' + cls + '" role="row"><span class="hist-dot"></span><span class="htime">' + esc(h.t) + '</span><span class="htext">' + esc(h.text || "") + '</span><span class="hacc">' + (acc ? esc(acc.name || "") : "—") + '</span></div>';
   });
-  html += "</div>";
-  host.innerHTML = html;
+  host.innerHTML = html + '</div>';
 }
 
 function histKind(t, kind){
@@ -1756,7 +1707,7 @@ function clearLog(){ actionLog = []; saveActionLog(); renderRoute(); toast("Ис
 
 function renderSettingsPage(){
   var html = "";
-  html += "<div class=\"section-head\"><div class=\"title\">Настройки</div></div>";
+  html += "<div class=\"section-head\"><div class=\"title\">Настройки</div></div><div class=\"settings-grid\">";
 
   html += "<div class=\"field\"><label>Категории</label>";
   html += "<button class=\"btn btn-ghost menu-action\" onclick=\"openCategoryManager()\">" + icoWrap(ICO.folder) + " Управление категориями</button>";
@@ -1803,7 +1754,7 @@ function renderSettingsPage(){
   html += "<div><span>Смен</span><b>" + shifts.length + "</b></div>";
   html += "<div><span>Последний бэкап</span><b>" + esc(backupAgeStr()) + "</b></div>";
   html += "<div><span>Версия</span><b>PC-16.1</b></div>";
-  html += "</div></div>";
+  html += "</div></div></div>";
 
   return html;
 }
@@ -1832,7 +1783,7 @@ function renderHintsBar(){
       "<span style=\"opacity:.4\">·</span>" +
       "<span><span class=\"kbd\">?</span> справка</span>" +
     "</div>" +
-    "<button class=\"hints-bar-close\" onclick=\"event.stopPropagation();closeHintsBar()\" title=\"Скрыть\">×</button>";
+    "<button class=\"hints-bar-close\" onclick=\"event.stopPropagation();closeHintsBar()\" title=\"Скрыть\" aria-label=\"Скрыть подсказки\">×</button>";
   host.setAttribute("onclick", "openHotkeysModal()");
 }
 
@@ -1965,7 +1916,8 @@ function importData(){
   var el = document.getElementById("importJson");
   if(!el || !el.value.trim()){ toast("Вставьте JSON", "err"); return; }
   var data = safeJson(el.value.trim(), null);
-  if(!data || !Array.isArray(data.accounts)){ toast("Неверный формат JSON", "err"); return; }
+  if(!data){ toast("Некорректный JSON", "err"); return; }
+  if(!Array.isArray(data.accounts)){ toast("Неверный формат JSON: нет списка accounts", "err"); return; }
   if(data.categories != null && !Array.isArray(data.categories)){ toast("Поле categories должно быть массивом", "err"); return; }
   if(data.shifts != null && !Array.isArray(data.shifts)){ toast("Поле shifts должно быть массивом", "err"); return; }
 
@@ -2390,6 +2342,11 @@ document.addEventListener("keydown", function(e){
     return;
   }
 
+  if(e.key === "Enter" && mOpen && tg === "INPUT" && !e.isComposing){
+    var pb = m.querySelector(".modal-actions .btn:last-child");
+    if(pb && !pb.disabled){ e.preventDefault(); pb.click(); return; }
+  }
+
   if(inField) return;
 
   if(!mOpen && (e.key === "?" || (e.shiftKey && e.key === "/"))){
@@ -2547,7 +2504,7 @@ function openEdit(id){
   html += "<h2>" + icoWrap(ICO.edit) + (isNew ? "Новый аккаунт" : "Редактировать") + "</h2>";
   html += "<div class=\"field\"><label>Имя аккаунта *</label><input id=\"f_name\" type=\"text\" value=\"" + esc(nm) + "\" placeholder=\"club_01\" autocomplete=\"off\"></div>";
   html += "<div class=\"field\"><label>Логин Steam</label><input id=\"f_login\" type=\"text\" value=\"" + esc(lgn) + "\" placeholder=\"login_name\" autocomplete=\"off\"></div>";
-  html += "<div class=\"field\"><label>Пароль</label><div class=\"pass-wrap\"><input id=\"f_pass\" type=\"password\" value=\"" + esc(pwd) + "\" placeholder=\"пароль\" autocomplete=\"off\"><button class=\"eye\" onclick=\"togglePass()\">👁</button></div></div>";
+  html += "<div class=\"field\"><label>Пароль</label><div class=\"pass-wrap\"><input id=\"f_pass\" type=\"password\" value=\"" + esc(pwd) + "\" placeholder=\"пароль\" autocomplete=\"off\"><button class=\"eye\" aria-label=\"Показать или скрыть пароль\" onclick=\"togglePass()\">👁</button></div></div>";
   html += "<div class=\"field\"><label>Категория</label><select id=\"f_category\" class=\"sort-select\">";
   html += "<option value=\"\"" + (catId == null ? " selected" : "") + ">— без категории —</option>";
   sortedCats.forEach(function(c){
@@ -2686,26 +2643,26 @@ function openBlock(id){
   var activeType = (Number(a.ban_permanent) === 1 || a.ban_ts) ? "ban" : "cool";
   var html = "<div class=\"modal-bg\" onclick=\"if(event.target===this)closeModal()\"><div class=\"modal\" onclick=\"event.stopPropagation()\">";
   html += "<h2>" + icoWrap(ICO.lock) + "Блокировка</h2>";
-  html += "<div class=\"type-tabs\">";
+  html += "<div class=\"type-tabs seg\" role=\"tablist\">";
   html += "<button class=\"type-tab" + (activeType === "ban" ? " active" : "") + "\" data-t=\"ban\" onclick=\"switchType('ban')\">" + icoWrap(ICO.ban) + " Бан</button>";
   html += "<button class=\"type-tab" + (activeType === "cool" ? " active" : "") + "\" data-t=\"cool\" onclick=\"switchType('cool')\">" + icoWrap(ICO.clock) + " Кулдаун</button>";
   html += "</div>";
   html += "<div id=\"quickBan\" style=\"display:" + (activeType === "ban" ? "block" : "none") + "\">";
-  html += "<div class=\"field\"><label>Быстрый выбор</label><div class=\"quick-grid\">";
-  html += "<button class=\"quick-btn\" onclick=\"setQuick(" + id + ",'ban',1440)\">1 день</button>";
-  html += "<button class=\"quick-btn\" onclick=\"setQuick(" + id + ",'ban',4320)\">3 дня</button>";
-  html += "<button class=\"quick-btn\" onclick=\"setQuick(" + id + ",'ban',10080)\">7 дней</button>";
-  html += "<button class=\"quick-btn\" onclick=\"setQuick(" + id + ",'ban',43200)\">30 дней</button>";
+  html += "<div class=\"field\"><label>Выберите срок</label><div class=\"quick-grid\">";
+  html += "<button class=\"quick-btn\" onclick=\"setQuick(" + id + ",'ban',1440)\">1д</button>";
+  html += "<button class=\"quick-btn\" onclick=\"setQuick(" + id + ",'ban',4320)\">3д</button>";
+  html += "<button class=\"quick-btn\" onclick=\"setQuick(" + id + ",'ban',10080)\">7д</button>";
+  html += "<button class=\"quick-btn\" onclick=\"setQuick(" + id + ",'ban',43200)\">30д</button>";
   html += "<button class=\"quick-btn wide\" onclick=\"setPermanent(" + id + ")\">" + icoWrap(ICO.ban) + " Навсегда</button>";
   html += "</div></div></div>";
   html += "<div id=\"quickCool\" style=\"display:" + (activeType === "cool" ? "block" : "none") + "\">";
-  html += "<div class=\"field\"><label>Быстрый выбор (CS2)</label><div class=\"quick-grid\">";
+  html += "<div class=\"field\"><label>Выберите срок</label><div class=\"quick-grid\">";
   html += "<button class=\"quick-btn\" onclick=\"setQuick(" + id + ",'cool',30)\">30 мин</button>";
-  html += "<button class=\"quick-btn\" onclick=\"setQuick(" + id + ",'cool',120)\">2 часа</button>";
-  html += "<button class=\"quick-btn\" onclick=\"setQuick(" + id + ",'cool',1440)\">24 часа</button>";
+  html += "<button class=\"quick-btn\" onclick=\"setQuick(" + id + ",'cool',120)\">2 ч</button>";
+  html += "<button class=\"quick-btn\" onclick=\"setQuick(" + id + ",'cool',1440)\">24 ч</button>";
   html += "<button class=\"quick-btn\" onclick=\"setQuick(" + id + ",'cool',10080)\">7 дней</button>";
   html += "</div></div></div>";
-  html += "<div class=\"field\"><label>Точное время окончания</label><input id=\"b_dt\" type=\"datetime-local\" value=\"" + defaultDateTimeLocal() + "\"></div>";
+  html += "<div class=\"field\"><label>Точная дата</label><input id=\"b_dt\" type=\"datetime-local\" value=\"" + defaultDateTimeLocal() + "\"></div>";
   html += "<div class=\"field\"><label>Причина</label><textarea id=\"b_reason\" placeholder=\"Например: VAC, CS2 cooldown\"></textarea></div>";
   html += "<div class=\"modal-actions\"><button class=\"btn btn-ghost\" onclick=\"closeModal()\">Отмена</button>";
   html += "<button class=\"btn btn-warn\" onclick=\"saveBlockFromInput(" + id + ")\">" + icoWrap(ICO.check) + " Установить</button></div>";
@@ -2860,16 +2817,16 @@ function showBusyBlock(a){
   var html = "<div class=\"modal-bg\"><div class=\"alert-modal busy\" style=\"max-width:400px\">";
   html += "<div class=\"icon\">" + icoWrap(ICO.phone) + "</div><h2>АККАУНТ ЗАНЯТ</h2>";
   html += "<div class=\"info\"><div class=\"info-row\"><span class=\"lbl\">Аккаунт</span><span class=\"val\">" + esc(a.name||"") + "</span></div>";
-  if(a.issued_to) html += "<div class=\"info-row\"><span class=\"lbl\">Кому</span><span class=\"val\">" + esc(a.issued_to) + "</span></div>";
-  if(a.busy_at) html += "<div class=\"info-row\"><span class=\"lbl\">Занят с</span><span class=\"val\">" + esc(fmtSince(a.busy_at)) + "</span></div>";
+  if(a.issued_to) html += "<div class=\"info-row\"><span class=\"lbl\">Выдан</span><span class=\"val\">" + esc(a.issued_to) + "</span></div>";
+  if(a.busy_at) html += "<div class=\"info-row\"><span class=\"lbl\">Время</span><span class=\"val\">" + esc(fmtSince(a.busy_at)) + "</span></div>";
   html += "</div>";
-  html += "<div class=\"modal-actions\"><button class=\"btn btn-ghost\" onclick=\"closeModal()\">Понятно</button>";
-  html += "<button class=\"btn btn-danger\" onclick=\"closeModal();releaseAccount(" + a.id + ")\">" + icoWrap(ICO.unlock) + " Освободить</button></div></div></div>";
+  html += "<div class=\"modal-actions\"><button class=\"btn btn-ghost\" onclick=\"closeModal()\">Закрыть</button>";
+  html += "<button class=\"btn btn-primary\" onclick=\"closeModal();releaseAccount(" + a.id + ")\">" + icoWrap(ICO.unlock) + " Освободить</button></div></div></div>";
   document.getElementById("modals").innerHTML = html;
 }
 function showBlockModal(a, kind, untilMs){
   var isPerm = kind === "ban-perm"; var isBan = kind === "ban" || isPerm;
-  var cls = isBan ? "" : "warn"; var icon = isBan ? ICO.ban : ICO.clock;
+  var cls = isPerm ? "perm" : (isBan ? "" : "warn"); var icon = isBan ? ICO.ban : ICO.clock;
   var title = isPerm ? "ЗАБАНЕН НАВСЕГДА" : (isBan ? "АККАУНТ ПОД БАНОМ" : "КУЛДАУН CS2");
   var reason = isBan ? a.ban_reason : a.cooldown_reason;
   var untilISO = isBan ? a.ban_until : a.cooldown_until;
@@ -2888,7 +2845,7 @@ function showBlockModal(a, kind, untilMs){
     html += "<div class=\"info\" style=\"background:rgba(224,92,92,0.08);border:1px solid rgba(224,92,92,0.15)\"><div style=\"font-size:13px;color:var(--err);text-align:center;line-height:1.5\">Бан бессрочный.<br>Снять можно только вручную.</div></div>";
   }
   html += "<div class=\"issue-hint\" style=\"margin-bottom:10px\">" + icoWrap(ICO.ban) + "<div>Выдача заблокирована.</div></div>";
-  html += "<div class=\"modal-actions\"><button class=\"btn btn-ghost\" onclick=\"openBlock(" + a.id + ")\">Управление</button><button class=\"btn btn-primary\" onclick=\"closeModal()\">Понятно</button></div>";
+  html += "<div class=\"modal-actions\"><button class=\"btn btn-ghost\" onclick=\"closeModal()\">Закрыть</button>" + (isBan ? "<button class=\"btn btn-danger\" onclick=\"clearBlock(" + a.id + ",'ban')\">Снять бан</button>" : "<button class=\"btn btn-warn\" onclick=\"clearBlock(" + a.id + ",'cool')\">Снять кулдаун</button>") + "</div>";
   html += "</div></div>";
   document.getElementById("modals").innerHTML = html;
   if(!isPerm && untilMs){
@@ -3051,5 +3008,32 @@ function init(){
   maybeRemindBackup();
   renderHintsBar();
 }
+
+/* [Р4] Доступность модалок: role/aria, фокус, возврат фокуса. */
+function setupModalA11y(){
+  var host = document.getElementById("modals");
+  if(!host || typeof MutationObserver !== "function") return;
+  var lastFocus = null;
+  new MutationObserver(function(){
+    var dlg = host.querySelector(".modal, .alert-modal");
+    if(dlg){
+      if(dlg.getAttribute("role") !== "dialog"){
+        dlg.setAttribute("role", "dialog");
+        dlg.setAttribute("aria-modal", "true");
+        var h = dlg.querySelector("h2");
+        if(h){ if(!h.id) h.id = "modalTitle"; dlg.setAttribute("aria-labelledby", h.id); }
+        if(!lastFocus) lastFocus = document.activeElement;
+        if(window.innerWidth >= 720){
+          var f = dlg.querySelector("input:not([type=hidden]):not([disabled]), textarea, .modal-actions .btn:last-child");
+          if(f && f.focus){ try{ f.focus(); }catch(e){} }
+        }
+      }
+    } else if(lastFocus){
+      var lf = lastFocus; lastFocus = null;
+      if(lf && lf.focus && document.body.contains(lf)){ try{ lf.focus(); }catch(e){} }
+    }
+  }).observe(host, { childList: true });
+}
+setupModalA11y();
 
 init();
