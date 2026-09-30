@@ -343,7 +343,17 @@ var ICO = {
   copy: "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='9' y='9' width='13' height='13' rx='2'/><path d='M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1'/></svg>",
   lock: "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='3' y='11' width='18' height='11' rx='2'/><path d='M7 11V7a5 5 0 0 1 10 0v4'/></svg>",
   check: "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'><polyline points='20 6 9 17 4 12'/></svg>",
-  play: "<svg viewBox='0 0 24 24' fill='currentColor'><path d='M5 3v18l15-9z'/></svg>",
+  play: "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'><path d='M6 4.5v15l13-7.5z'/></svg>",
+  more: "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='5' cy='12' r='1'/><circle cx='12' cy='12' r='1'/><circle cx='19' cy='12' r='1'/></svg>",
+  plus: "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 5v14M5 12h14'/></svg>",
+  send: "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'><path d='m22 2-7 20-4-9-9-4z'/><path d='M22 2 11 13'/></svg>",
+  wallet: "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'><path d='M20 7H5a2 2 0 0 1 0-4h13v4'/><path d='M3 5v14a2 2 0 0 0 2 2h15V7'/><path d='M16 14h.01'/></svg>",
+  shield: "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'><path d='M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z'/></svg>",
+  userCheck: "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'><path d='M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2'/><circle cx='9' cy='7' r='4'/><path d='m16 11 2 2 4-4'/></svg>",
+  checkCircle: "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'><path d='M22 11.1V12a10 10 0 1 1-5.9-9.1'/><path d='m22 4-10 10-3-3'/></svg>",
+  keyhole: "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'><circle cx='12' cy='10' r='3'/><path d='M12 13v4'/><rect x='4' y='3' width='16' height='18' rx='3'/></svg>",
+  eyeOff: "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'><path d='M17.9 17.9A10.1 10.1 0 0 1 12 20c-7 0-11-8-11-8a18.5 18.5 0 0 1 5.1-5.9M9.9 4.2A9 9 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.2 3.2M1 1l22 22'/></svg>",
+  upload: "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'><path d='M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4'/><path d='m17 8-5-5-5 5'/><path d='M12 3v12'/></svg>",
   unlock: "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='3' y='11' width='18' height='11' rx='2'/><path d='M7 11V7a5 5 0 0 1 9.9-1'/></svg>",
   ban: "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='12' cy='12' r='10'/><path d='m4.93 4.93 14.14 14.14'/></svg>",
   clock: "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><circle cx='12' cy='12' r='10'/><polyline points='12 6 12 12 16 14'/></svg>",
@@ -691,28 +701,35 @@ function refreshNow(){ loadAccounts(); renderRoute(); scheduleExpireCheck(); }
 function buildApp(){
   var host = document.getElementById("app");
   if(!host) return;
-  host.innerHTML =
-    "<div class=\"header\">" +
-      "<div class=\"h-brand\">" + logoHTML() +
-        "<div class=\"h-text\"><div class=\"h-name\">United Gamers</div><div class=\"h-sub\">SteamAcc · Admin</div></div>" +
-      "</div>" +
-      "<button class=\"icon-btn\" onclick=\"openHotkeysModal()\" title=\"Горячие клавиши (Shift+/)\">" + ICO.help + "</button>" +
-    "</div>" +
-    "<div class=\"sub\">Управление Steam-аккаунтами клуба</div>" +
-    "<div class=\"tabs-bar\">" +
-      "<button class=\"tabs-bar-btn\" data-route=\"accounts\" onclick=\"switchRoute('accounts')\">Аккаунты</button>" +
-      "<button class=\"tabs-bar-btn\" data-route=\"cash\" onclick=\"switchRoute('cash')\">Касса</button>" +
-      "<button class=\"tabs-bar-btn\" data-route=\"history\" onclick=\"switchRoute('history')\">История</button>" +
-      "<button class=\"tabs-bar-btn\" data-route=\"settings\" onclick=\"switchRoute('settings')\">Настройки</button>" +
-    "</div>" +
-    "<div id=\"pageZone\"></div>";
+  var nav = [["accounts","Аккаунты",ICO.user],["cash","Касса",ICO.wallet],["history","История",ICO.history],["settings","Настройки",ICO.settings]];
+  var side = '<aside class="sidebar"><div class="side-brand">' + logoHTML() + '<div class="h-text"><div class="h-name">United Gamers</div><div class="h-sub">SteamAcc · Admin</div></div></div><nav class="side-nav" aria-label="Разделы">';
+  nav.forEach(function(n){ side += '<button class="side-item" data-route="' + n[0] + '" onclick="switchRoute(\'' + n[0] + '\')">' + icoWrap(n[2]) + '<span>' + n[1] + '</span></button>'; });
+  side += '</nav><div class="side-foot"><div>United Gamers<br>SteamAcc · Admin<br>v1.4.0</div><button class="side-help" onclick="openHotkeysModal()">Горячие клавиши (F1)</button></div></aside>';
+  var tabs = '<div class="tabs-bar">';
+  nav.forEach(function(n){ tabs += '<button class="tabs-bar-btn" data-route="' + n[0] + '" onclick="switchRoute(\'' + n[0] + '\')">' + n[1] + '</button>'; });
+  tabs += '</div>';
+  host.innerHTML = '<div class="shell">' + side + '<div class="main-col">' +
+    '<div class="header topbar">' +
+      '<div class="h-brand top-logo">' + logoHTML() + '<div class="h-text"><div class="h-name">United Gamers</div><div class="h-sub">SteamAcc · Admin</div></div></div>' +
+      '<div class="search-wrap top-search"><span class="search-icon">' + ICO.search + '</span>' +
+        '<input id="searchInput" type="text" placeholder="Поиск по аккаунтам, логину, имени..." aria-label="Поиск по аккаунтам" autocomplete="off" inputmode="search">' +
+        '<span class="kbd search-kbd">Ctrl K</span></div>' +
+      '<button class="icon-btn" onclick="openHotkeysModal()" title="Горячие клавиши (F1)" aria-label="Горячие клавиши">' + ICO.help + '</button>' +
+    '</div>' + tabs + '<div id="pageZone"></div></div></div>';
+  var si = document.getElementById("searchInput");
+  if(si){
+    si.value = currentSearch;
+    si.addEventListener("input", function(){ onSearch(this.value); });
+    si.addEventListener("keydown", function(e){ if(e.key === "Escape" && currentSearch){ e.stopPropagation(); clearSearch(); } });
+  }
   _appBuilt = true;
   bindHoverTracking();
   renderRoute();
 }
 
 function applyRouteHighlight(){
-  var tabs = document.querySelectorAll(".tabs-bar-btn");
+  document.body.setAttribute("data-route", currentRoute);
+  var tabs = document.querySelectorAll(".tabs-bar-btn, .side-item");
   for(var i=0;i<tabs.length;i++){
     var t = tabs[i];
     if(t.getAttribute("data-route") === currentRoute) t.classList.add("active");
@@ -758,41 +775,21 @@ function switchRoute(r){
  * Страница: Аккаунты
  * ============================================================ */
 
+function statTile(key, label, icon){
+  var go = "setFilter('" + key + "')";
+  return '<div class="stat ' + key + '" data-stat="' + key + '" role="button" tabindex="0" onclick="' + go + '" onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();' + go + '}">' +
+    '<span class="stat-ico">' + icoWrap(icon) + '</span><div class="stat-body"><div class="lbl">' + label + '</div><div class="num">0</div></div><div class="of">из 0</div></div>';
+}
 function renderAccountsPage(){
-  return "" +
-    "<div class=\"stats\">" +
-      "<div class=\"stat free\" data-stat=\"free\" onclick=\"setFilter('free')\"><div class=\"num\">0</div><div class=\"lbl\">Свободно</div></div>" +
-      "<div class=\"stat cool\" data-stat=\"cool\" onclick=\"setFilter('cool')\"><div class=\"num\">0</div><div class=\"lbl\">Кулдаун</div></div>" +
-      "<div class=\"stat ban\" data-stat=\"ban\" onclick=\"setFilter('ban')\"><div class=\"num\">0</div><div class=\"lbl\">Бан</div></div>" +
-      "<div class=\"stat busy\" data-stat=\"busy\" onclick=\"setFilter('busy')\"><div class=\"num\">0</div><div class=\"lbl\">Занято</div></div>" +
-    "</div>" +
-    "<div id=\"categoryZone\"></div>" +
-    "<div id=\"searchZone\"></div>" +
-    "<div id=\"listZone\"></div>";
+  return '<div class="stats">' + statTile("free","Свободно",ICO.userCheck) + statTile("cool","Кулдаун",ICO.clock) + statTile("ban","Бан",ICO.ban) + statTile("busy","Занято",ICO.keyhole) + '</div>' +
+    '<div id="categoryZone"></div><div id="searchZone"></div><div id="listZone"></div>';
 }
 
 /* ============================================================
  * renderList
  * ============================================================ */
 
-function buildSearchZone(){
-  var host = document.getElementById("searchZone");
-  if(!host) return;
-  if(host.querySelector("#searchInput")) return;
-  if(accounts.length === 0){ host.innerHTML = ""; return; }
-  host.innerHTML = "<div class=\"search-wrap\">" +
-    "<span class=\"search-icon\">" + ICO.search + "</span>" +
-    "<input id=\"searchInput\" type=\"text\" placeholder=\"Поиск по имени или логину...\" autocomplete=\"off\" inputmode=\"search\">" +
-    "</div>";
-  var si = document.getElementById("searchInput");
-  if(si){
-    si.value = currentSearch;
-    si.addEventListener("input", function(){ onSearch(this.value); });
-    si.addEventListener("keydown", function(e){
-      if(e.key === "Escape" && currentSearch){ e.stopPropagation(); clearSearch(); }
-    });
-  }
-}
+function buildSearchZone(){ /* [предположение] поиск теперь в шапке (buildApp) */ }
 function destroySearchZone(){
   var host = document.getElementById("searchZone");
   if(host) host.innerHTML = "";
@@ -921,7 +918,7 @@ function renderList(){
     html += "<option value=\"newest\"" + (currentSort === "newest" ? " selected" : "") + ">Сначала новые</option>";
     html += "<option value=\"oldest\"" + (currentSort === "oldest" ? " selected" : "") + ">Сначала старые</option>";
     html += "<option value=\"busy_longest\"" + (currentSort === "busy_longest" ? " selected" : "") + ">Сначала давно выданные</option>";
-    html += "</select></div><div class=\"count-label\">" + visible.length + " из " + accounts.length + "</div><button class=\"btn btn-ghost desk-only\" onclick=\"toggleView()\">" + (tableMode() ? "Карточки" : "Таблица") + "</button></div>";
+    html += "</select></div><div class=\"count-label\">" + visible.length + " из " + accounts.length + "</div><button class=\"btn btn-primary desk-only\" onclick=\"openEdit(null)\">" + icoWrap(ICO.plus) + " Добавить аккаунт</button><button class=\"btn btn-ghost desk-only\" onclick=\"toggleView()\">" + (tableMode() ? "Карточки" : "Таблица") + "</button></div>";
   }
 
   if(accounts.length === 0){
@@ -975,36 +972,81 @@ function highlightHovered(){
 }
 
 function updateSearchClearBtn(){
-  var wrap = document.querySelector("#searchZone .search-wrap");
+  var wrap = document.querySelector(".top-search");
   if(!wrap) return;
   var old = wrap.querySelector(".search-clear");
   if(currentSearch){
+    wrap.classList.add("has-q");
     if(!old){
       var b = document.createElement("button");
       b.className = "search-clear";
       b.textContent = "✕";
+      b.setAttribute("aria-label", "Очистить поиск");
       b.setAttribute("onclick","clearSearch()");
       wrap.appendChild(b);
     }
-  } else if(old){ old.remove(); }
+  } else { wrap.classList.remove("has-q"); if(old){ old.remove(); } }
 }
 
 function tableMode(){ return window.innerWidth >= 900 && currentView === "table"; }
 function toggleView(){ currentView = currentView === "table" ? "cards" : "table"; lsSet("view", currentView); renderList(); }
 
+function iconBtn(cls, label, onclick, icon){
+  return '<button class="icon-act ' + cls + '" title="' + esc(label) + '" aria-label="' + esc(label) + '" onclick="event.stopPropagation();' + onclick + '">' + icon + '</button>';
+}
+function moreBtn(id){
+  return '<button class="icon-act ia-ghost" title="Ещё" aria-label="Ещё" aria-haspopup="menu" onclick="openRowMenu(' + id + ',event)">' + ICO.more + '</button>';
+}
 function renderTable(list){
   var statusMap = new Map();
   list.forEach(function(a){ statusMap.set(String(a.id), getStatus(a)); });
   function th(l, k){ return "<th onclick=\"setSort('" + k + "')\">" + l + (currentSort === k ? " ▾" : "") + "</th>"; }
-  var h = "<table class=\"tbl\"><thead><tr>" + th("Аккаунт","name") + th("Логин","login") + th("Статус","status") + "<th style=\"cursor:default\">Детали</th><th style=\"cursor:default\"></th></tr></thead><tbody>";
-  list.forEach(function(a){
+  function thx(l){ return '<th style="cursor:default">' + l + '</th>'; }
+  var h = '<table class="tbl"><thead><tr>' + thx("#") + thx("") + th("Имя","name") + th("Логин","login") + thx("Категория") + th("Статус","status") + thx("Выдан / Кулдаун / Бан") + thx("Действия") + '</tr></thead><tbody>';
+  list.forEach(function(a, i){
     var s = statusMap.get(String(a.id)), det = "";
     if(s === "busy") det = (a.issued_to ? esc(a.issued_to) + " · " : "") + (a.busy_at ? "с " + esc(fmtSince(a.busy_at)) : "");
     else if(s === "cool") det = esc(a.cooldown_reason);
     else if(s === "ban" || s === "ban-perm") det = esc(a.ban_reason);
-    h += "<tr data-status=\"" + s + "\" data-id=\"" + a.id + "\" onclick=\"openEdit(" + a.id + ")\"><td><div class=\"nm\">" + avatarHTML(a, "sm") + esc(a.name || "Без имени") + "</div></td><td class=\"mut\">" + esc(a.login || "—") + "</td><td>" + renderPill(a, s) + "</td><td class=\"mut\">" + det + "</td><td>" + actionFor(a, s) + " <button class=\"btn btn-primary\" onclick=\"event.stopPropagation();openBlock(" + a.id + ")\">" + icoWrap(ICO.lock) + " Блок</button></td></tr>";
+    var cat = a.category_id ? getCategory(a.category_id) : null;
+    h += '<tr data-status="' + s + '" data-id="' + a.id + '" onclick="openEdit(' + a.id + ')">' +
+      '<td class="num-col">' + pad(i + 1) + '</td><td>' + avatarHTML(a, "sm") + '</td>' +
+      '<td><div class="nm">' + esc(a.name || "Без имени") + '</div></td>' +
+      '<td class="mut">' + esc(a.login || "—") + '</td><td class="mut">' + (cat ? esc(cat.name) : "—") + '</td>' +
+      '<td>' + renderPill(a, s) + '</td><td class="mut">' + (det || "—") + '</td>' +
+      '<td class="act"><div class="act-wrap">' + actionFor(a, s, true) +
+      iconBtn("ia-ghost", "Копировать логин", "copyText(getAccount(" + a.id + ").login,null,'Логин скопирован')", ICO.copy) +
+      iconBtn("ia-ghost", "Блокировка", "openBlock(" + a.id + ")", ICO.lock) + moreBtn(a.id) + '</div></td></tr>';
   });
-  return h + "</tbody></table>";
+  return h + '</tbody></table>';
+}
+
+function closeRowMenu(){
+  var m = document.getElementById("rowMenu");
+  if(m && m.parentNode) m.parentNode.removeChild(m);
+  document.removeEventListener("click", closeRowMenu);
+  window.removeEventListener("scroll", closeRowMenu, true);
+}
+function openRowMenu(id, ev){
+  if(ev){ ev.stopPropagation(); }
+  var a = getAccount(id); if(!a) return;
+  closeRowMenu();
+  var r = (ev && ev.currentTarget) ? ev.currentTarget.getBoundingClientRect() : { right: 120, bottom: 120, top: 120 };
+  var m = document.createElement("div");
+  m.id = "rowMenu"; m.className = "row-menu"; m.setAttribute("role", "menu");
+  m.innerHTML = '<button role="menuitem" onclick="closeRowMenu();openEdit(' + id + ')">' + icoWrap(ICO.edit) + ' Редактировать</button>' +
+    '<button role="menuitem" onclick="closeRowMenu();copyText(getAccount(' + id + ').login,null,\'Логин скопирован\')">' + icoWrap(ICO.copy) + ' Копировать логин</button>' +
+    '<button role="menuitem" class="danger" onclick="closeRowMenu();askDeleteAccount(' + id + ')">' + icoWrap(ICO.trash) + ' Удалить</button>';
+  document.body.appendChild(m);
+  var w = m.offsetWidth, hh = m.offsetHeight;
+  var left = Math.max(8, Math.min(window.innerWidth - w - 8, r.right - w));
+  var top = r.bottom + 6; if(top + hh > window.innerHeight - 8) top = Math.max(8, r.top - hh - 6);
+  m.style.left = left + "px"; m.style.top = top + "px";
+  setTimeout(function(){ document.addEventListener("click", closeRowMenu); window.addEventListener("scroll", closeRowMenu, true); }, 0);
+}
+function askDeleteAccount(id){
+  var a = getAccount(id); if(!a) return;
+  confirmAction({ title: "Удалить аккаунт?", text: "Аккаунт «" + (a.name || "Без имени") + "» будет удалён.", ok: "Удалить", cb: function(){ deleteAccount(id); } });
 }
 
 function chip(val, label, count){ var cls = "chip" + (currentFilter === val ? " active" : ""); return "<button class=\"" + cls + "\" data-chip=\"" + val + "\" onclick=\"setFilter('" + val + "')\">" + label + " · " + count + "</button>"; }
@@ -1028,10 +1070,13 @@ function renderPill(a, s){
   return "";
 }
 
-function actionFor(a, s){
-  if(s === "busy") return "<button class=\"btn btn-ghost\" onclick=\"event.stopPropagation();releaseAccount(" + a.id + ")\">" + icoWrap(ICO.unlock) + " Освободить</button>";
-  if(s === "free") return "<button class=\"btn btn-success\" onclick=\"event.stopPropagation();tryIssue(" + a.id + ")\">" + icoWrap(ICO.play) + " Выдать</button>";
-  return "<button class=\"btn " + (s === "cool" ? "btn-warn" : "btn-danger") + "\" onclick=\"event.stopPropagation();tryIssue(" + a.id + ")\">" + icoWrap(ICO.ban) + " Заблокировано</button>";
+function actionFor(a, s, iconOnly){
+  var act, label, cls, ico;
+  if(s === "busy"){ label = "Освободить"; cls = "btn-ghost"; ico = ICO.unlock; act = "releaseAccount(" + a.id + ")"; }
+  else if(s === "free"){ label = "Выдать"; cls = "btn-success"; ico = ICO.play; act = "tryIssue(" + a.id + ")"; }
+  else { label = "Заблокировано"; cls = (s === "cool" ? "btn-warn" : "btn-danger"); ico = ICO.ban; act = "tryIssue(" + a.id + ")"; }
+  if(iconOnly) return iconBtn("ia-" + cls.replace("btn-", ""), label, act, ico);
+  return '<button class="btn ' + cls + '" onclick="event.stopPropagation();' + act + '">' + icoWrap(ico) + ' ' + label + '</button>';
 }
 
 function avatarHTML(a, size){
@@ -1062,7 +1107,8 @@ function renderCard(a){
   html += "<div class=\"acc-login\">" + icoWrap(ICO.user) + esc(a.login||"логин не указан") + "</div>";
   if(cat) html += "<div class=\"acc-cat\">" + esc(cat.name) + "</div>";
   html += "</div>";
-  html += "<button class=\"icon-btn card-menu\" onclick=\"event.stopPropagation();openEdit(" + a.id + ")\">" + ICO.edit + "</button>";
+  html += "<div class=\"card-tools\">" + iconBtn("ia-ghost", "Копировать логин", "copyText(getAccount(" + a.id + ").login,null,'Логин скопирован')", ICO.copy) +
+    (a.password ? iconBtn("ia-ghost", "Копировать пароль", "copyText(getAccount(" + a.id + ").password,null,'Пароль скопирован')", ICO.keyhole) : "") + moreBtn(a.id) + "</div>";
   html += "</div>" + pill + "</div></div>";
   html += "<div class=\"actions\">" + actionBtn;
   html += "<button class=\"btn btn-primary\" onclick=\"event.stopPropagation();openBlock(" + a.id + ")\">" + icoWrap(ICO.lock) + " Блок</button>";
@@ -1098,6 +1144,8 @@ function updateStatsAndChips(){
   Object.keys(map).forEach(function(key){
     var el = document.querySelector(".stat[data-stat=\"" + key + "\"] .num");
     if(el) el.textContent = String(map[key]);
+    var of = document.querySelector(".stat[data-stat=\"" + key + "\"] .of");
+    if(of) of.textContent = "из " + accounts.length;
   });
   var chipAll = document.querySelector(".chip[data-chip=\"all\"]");
   if(chipAll) chipAll.textContent = "Все · " + accounts.length;
@@ -1417,6 +1465,9 @@ function saveCashPart(partKey){
   var cashEl = document.getElementById("cash_" + partKey + "_cash");
   var sbpEl = document.getElementById("cash_" + partKey + "_sbp");
   if(!revEl || !termEl || !cashEl) return;
+  /* [UG-WEB-07] Защита от второй смены за сутки. */
+  var _todayShift = findShiftByDate(todayISO());
+  if(_todayShift && _todayShift.closed_at){ toast("Смена за сегодня уже закрыта", "err"); return; }
   var rev = String(revEl.value).trim();
   var term = String(termEl.value).trim();
   var cash = String(cashEl.value).trim();
@@ -2317,6 +2368,7 @@ document.addEventListener("keydown", function(e){
   var mOpen = m && m.innerHTML.trim().length > 0;
 
   if(e.key === "Escape"){
+    if(document.getElementById("rowMenu")){ e.preventDefault(); closeRowMenu(); return; }
     if(t === "searchInput" && currentSearch){ e.preventDefault(); clearSearch(); return; }
     if(mOpen){
       e.preventDefault();
@@ -2327,6 +2379,16 @@ document.addEventListener("keydown", function(e){
   }
 
   if(e.key === "Enter" && /^f_(name|login|pass)$/.test(t || "")){ e.preventDefault(); saveAccount(window._editId); return; }
+
+  if(e.key === "F1"){ e.preventDefault(); if(!mOpen) openHotkeysModal(); return; }
+  if((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && (e.key === "k" || e.key === "K" || e.key === "л" || e.key === "Л")){
+    e.preventDefault();
+    if(mOpen) return;
+    if(currentRoute !== "accounts") switchRoute("accounts");
+    var sk = document.getElementById("searchInput");
+    if(sk){ sk.focus(); sk.select(); }
+    return;
+  }
 
   if(inField) return;
 
