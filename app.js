@@ -30,14 +30,104 @@ function lsGetJson(key, fallback){
 function lsSetJson(key, val){ return lsSet(key, JSON.stringify(val)); }
 
 /* ============================================================
+ * Cash draft (UG-WEB-04)
+ * ------------------------------------------------------------
+ * Черновик ввода полей «Касса». Хранится отдельно от shift.day/night,
+ * не влияет на семантику кнопки «Сохранить» и бейджа «сохранено».
+ * Ключ: ug:cash_draft
+ * Структура: { day: {revenue,terminal,cash,sbp}, night: {...} }
+ * Значения — строки «как ввёл пользователь». Пустые поля не пишем.
+ * ============================================================ */
+
+var TG_CASH_DRAFT_KEY = "cash_draft";
+var CASH_DRAFT_FIELDS = ["revenue", "terminal", "cash", "sbp"];
+
+function readCashDraft(){
+  var raw = lsGetJson(TG_CASH_DRAFT_KEY, null);
+  if(!raw || typeof raw !== "object") return null;
+  var out = {};
+  ["day", "night"].forEach(function(partKey){
+    var src = raw[partKey];
+    if(!src || typeof src !== "object") return;
+    var part = {};
+    var has = false;
+    CASH_DRAFT_FIELDS.forEach(function(f){
+      var v = src[f];
+      if(v === null || v === undefined) return;
+      var s = String(v);
+      if(s === "") return;
+      part[f] = s;
+      has = true;
+    });
+    if(has) out[partKey] = part;
+  });
+  return (out.day || out.night) ? out : null;
+}
+
+function writeCashDraft(draft){
+  if(!draft || (!draft.day && !draft.night)){ lsRemove(TG_CASH_DRAFT_KEY); return; }
+  lsSetJson(TG_CASH_DRAFT_KEY, draft);
+}
+
+function getCashDraftPart(partKey){
+  var d = readCashDraft();
+  return (d && d[partKey]) ? d[partKey] : null;
+}
+
+function setCashDraftPart(partKey, obj){
+  var d = readCashDraft() || {};
+  if(!obj || !Object.keys(obj).length){ delete d[partKey]; }
+  else { d[partKey] = obj; }
+  writeCashDraft(d);
+}
+
+function clearCashDraftPart(partKey){
+  var d = readCashDraft();
+  if(!d) return;
+  delete d[partKey];
+  writeCashDraft(d);
+}
+
+function clearCashDraftAll(){ lsRemove(TG_CASH_DRAFT_KEY); }
+
+function cashDraftFieldValue(partKey, field){
+  var p = getCashDraftPart(partKey);
+  if(!p) return null;
+  var v = p[field];
+  return (v === null || v === undefined) ? null : String(v);
+}
+
+/* Считать текущие значения из DOM инпутов «Кассы».
+   Возвращает объект с частями, в которых есть хоть одно непустое значение. */
+function snapshotCashInputs(){
+  var out = {};
+  ["day", "night"].forEach(function(partKey){
+    var part = {};
+    var has = false;
+    CASH_DRAFT_FIELDS.forEach(function(f){
+      var el = document.getElementById("cash_" + partKey + "_" + f);
+      if(!el) return;
+      var v = String(el.value == null ? "" : el.value);
+      if(v === "") return;
+      part[f] = v;
+      has = true;
+    });
+    if(has) out[partKey] = part;
+  });
+  return out;
+}
+
+/* Записать текущее состояние инпутов в ug:cash_draft.
+   Вызывается при oninput в полях (через updateCashDerived). */
+function persistCashInputs(){
+  var snap = snapshotCashInputs();
+  writeCashDraft(snap);
+}
+
+/* ============================================================
  * Telegram Worker (UG-WEB-03)
  * ============================================================ */
 
-/* [UG-WEB-03][iter1] Единственное место, где «живёт» хост Worker'а.
-   Реальный хост Заказчик вписывает в ДВУХ местах:
-   1) в <meta Content-Security-Policy> в index.html — connect-src https://<хост>;
-   2) в Настройках приложения — полный URL воркера (сохраняется в ug:telegram_worker_url).
-   Ниже — только тексты-подсказки и ключ хранилища, сам хост нигде не зашит. */
 var TG_WORKER_URL_KEY = "telegram_worker_url";
 var TG_WORKER_HOST_HINT = "например: https://ug-tg.<ваш-subdomain>.workers.dev";
 var TG_SEND_TIMEOUT_MS = 10000;
@@ -82,7 +172,6 @@ function tgBtnSetState(btnEl, state, label){
   else if(state === "error"){ btnEl.disabled = false; if(label != null) btnEl.textContent = label; }
 }
 
-/* Отправка текста в Worker. ES5 + fetch/Promise/AbortController. */
 function sendShiftReportToTelegram(text, btnEl){
   var url = telegramWorkerUrl();
   if(!url){ toast("Укажите URL Worker'а в Настройках", "err"); return; }
@@ -158,7 +247,6 @@ function sendShiftReportToTelegram(text, btnEl){
   });
 }
 
-/* Собрать текст и отправить. kind: "total" | "single" */
 function sendCashReport(kind, btnEl){
   var shift = findTodayShift();
   if(!shift){ toast("Нет данных", "err"); return; }
@@ -174,7 +262,6 @@ function sendCashReport(kind, btnEl){
   sendShiftReportToTelegram(text, btnEl);
 }
 
-/* Ping воркера: GET, ожидаем {ok:true} */
 function checkTelegramWorker(btnEl){
   var url = telegramWorkerUrl();
   if(!url){ toast("Сначала сохраните URL Worker'а", "err"); return; }
@@ -1203,16 +1290,22 @@ function renderShiftPartBlock(shift, partKey){
         "</div>" +
       "</div>";
   }
+  /* [UG-WEB-04][iter2] Подстановка значений из черновика ug:cash_draft
+     (если он есть) в инпуты несозданной части смены. */
+  var vRev = cashDraftFieldValue(partKey, "revenue");
+  var vTerm = cashDraftFieldValue(partKey, "terminal");
+  var vCash = cashDraftFieldValue(partKey, "cash");
+  var vSbp = cashDraftFieldValue(partKey, "sbp");
   return "" +
     "<div class=\"shift-block\">" +
       "<div class=\"shift-block-head\">" +
         "<div class=\"shift-block-title\">" + title + "</div>" +
       "</div>" +
       "<div class=\"shift-grid\">" +
-        "<div class=\"shift-field\"><label>Выручка *</label><input id=\"cash_" + partKey + "_revenue\" type=\"number\" inputmode=\"decimal\" oninput=\"updateCashDerived('" + partKey + "')\"></div>" +
-        "<div class=\"shift-field\"><label>Терминал *</label><input id=\"cash_" + partKey + "_terminal\" type=\"number\" inputmode=\"decimal\" oninput=\"updateCashDerived('" + partKey + "')\"></div>" +
-        "<div class=\"shift-field\"><label>Наличные *</label><input id=\"cash_" + partKey + "_cash\" type=\"number\" inputmode=\"decimal\" oninput=\"updateCashDerived('" + partKey + "')\"></div>" +
-        "<div class=\"shift-field\"><label>Оплата по СБП</label><input id=\"cash_" + partKey + "_sbp\" type=\"number\" inputmode=\"decimal\" oninput=\"updateCashDerived('" + partKey + "')\"></div>" +
+        "<div class=\"shift-field\"><label>Выручка *</label><input id=\"cash_" + partKey + "_revenue\" type=\"number\" inputmode=\"decimal\" value=\"" + (vRev != null ? esc(vRev) : "") + "\" oninput=\"updateCashDerived('" + partKey + "')\"></div>" +
+        "<div class=\"shift-field\"><label>Терминал *</label><input id=\"cash_" + partKey + "_terminal\" type=\"number\" inputmode=\"decimal\" value=\"" + (vTerm != null ? esc(vTerm) : "") + "\" oninput=\"updateCashDerived('" + partKey + "')\"></div>" +
+        "<div class=\"shift-field\"><label>Наличные *</label><input id=\"cash_" + partKey + "_cash\" type=\"number\" inputmode=\"decimal\" value=\"" + (vCash != null ? esc(vCash) : "") + "\" oninput=\"updateCashDerived('" + partKey + "')\"></div>" +
+        "<div class=\"shift-field\"><label>Оплата по СБП</label><input id=\"cash_" + partKey + "_sbp\" type=\"number\" inputmode=\"decimal\" value=\"" + (vSbp != null ? esc(vSbp) : "") + "\" oninput=\"updateCashDerived('" + partKey + "')\"></div>" +
       "</div>" +
       "<div style=\"margin-top:10px\" id=\"cash_derived_" + partKey + "\"></div>" +
       "<div class=\"modal-actions\" style=\"margin-top:14px\">" +
@@ -1235,11 +1328,11 @@ function updateCashDerived(partKey){
   host.innerHTML =
     "<div class=\"shift-derived\"><span class=\"lbl\">LanGame</span><span class=\"val\">" + formatMoney(langame) + " ₽</span></div>" +
     "<div class=\"shift-derived\" style=\"margin-top:6px\"><span class=\"lbl\">Проверка (Терминал + LanGame + Наличные)</span><span class=\"val " + (ok ? "ok" : "err") + "\">" + formatMoney(check_sum) + " ₽ <span class=\"shift-check\">" + mark + "</span></span></div>";
+  /* [UG-WEB-04][iter2] Сохраняем введённое в ug:cash_draft. */
+  persistCashInputs();
 }
 
-/* [UG-WEB-03][iter1] Кнопка «Отправить отчёт в Telegram».
-   Добавлена в оба блока (итог за сутки и одиночная часть).
-   Если URL воркера не задан — кнопка disabled с title-подсказкой. */
+/* [UG-WEB-03][iter1] Кнопка «Отправить отчёт в Telegram». */
 function renderTelegramSendButton(scope){
   var url = telegramWorkerUrl();
   var dis = url ? "" : " disabled";
@@ -1334,6 +1427,8 @@ function saveCashPart(partKey){
   }
   shift[partKey] = part;
   persistShifts();
+  /* [UG-WEB-04][iter2] Черновик этой части больше не нужен. */
+  clearCashDraftPart(partKey);
   addLog((partKey === "day" ? "Касса: день сохранён " : "Касса: ночь сохранена ") + fmtDateRu(today) + " (" + formatMoney(part.revenue) + " ₽)", "info");
   toast(partKey === "day" ? "День сохранён" : "Ночь сохранена", "ok");
   renderRoute();
@@ -1464,6 +1559,8 @@ function deleteShift(dateISO){
     cb: function(){
       shifts = shifts.filter(function(s){ return s.date !== dateISO; });
       persistShifts();
+      /* [UG-WEB-04][iter2] Черновик мог относиться к удаляемой смене — сбрасываем. */
+      clearCashDraftAll();
       addLog("Касса: смена удалена " + fmtDateRu(dateISO), "warn");
       closeModal();
       toast("Смена удалена", "ok");
@@ -1591,7 +1688,7 @@ function renderSettingsPage(){
   html += "<button class=\"btn btn-ghost menu-action\" onclick=\"openCategoryManager()\">" + icoWrap(ICO.folder) + " Управление категориями</button>";
   html += "</div>";
 
-  /* [UG-WEB-03][iter1] Блок Telegram: URL Worker'а + сохранить + проверить связь. */
+  /* [UG-WEB-03][iter1] Блок Telegram. */
   var tgUrl = telegramWorkerUrl();
   html += "<div class=\"field\"><label>Telegram — отправка отчётов</label>";
   html += "<div class=\"issue-hint\">" + icoWrap(ICO.info) + "<div>Вставьте URL вашего Cloudflare Worker'а (например, " + esc(TG_WORKER_HOST_HINT) + "). Хост должен совпадать с <code>connect-src</code> в CSP. Токен бота здесь не хранится.</div></div>";
@@ -2073,6 +2170,8 @@ function applyImport(imported, logIn, inCats, inShifts, mode){
   _prevVisibleIds = new Set();
   if(logIn){ actionLog = logIn; saveActionLog(); }
   persist();
+  /* [UG-WEB-04][iter2] При «замене всего» черновик кассы не имеет смысла. */
+  if(mode === "replace") clearCashDraftAll();
   closeModal(); renderRoute(); scheduleExpireCheck();
   if(mode === "merge"){ toast("Добавлено: " + added + ", обновлено: " + updated, "ok"); addLog("Импорт (слияние): добавлено " + added + ", обновлено " + updated, "info"); }
   else { toast("Импортировано: " + finalList.length, "ok"); addLog("Импорт (замена): " + finalList.length + " записей", "info"); }
@@ -2135,7 +2234,10 @@ function rollbackSnap(){
       shifts = sn.shifts.map(normalizeShift).filter(Boolean).sort(function(a,b){ return b.date.localeCompare(a.date); });
       persistShifts();
     }
-    rebuildAccountIndex(); persist(); addLog("Откат: " + sn.label, "warn");
+    rebuildAccountIndex(); persist();
+    /* [UG-WEB-04][iter2] Черновик кассы при откате снимка не имеет смысла. */
+    clearCashDraftAll();
+    addLog("Откат: " + sn.label, "warn");
     closeModal(); renderRoute(); scheduleExpireCheck(); toast("Данные восстановлены", "ok");
   }});
 }
@@ -2326,9 +2428,13 @@ window.addEventListener("storage", function(e){
     if(Array.isArray(log)) actionLog = log;
     return;
   }
-  /* [UG-WEB-03][iter1] Синхронизация URL Worker'а между вкладками. */
   if(e.key === "ug:telegram_worker_url"){
     if(currentRoute === "settings" || currentRoute === "cash") renderRoute();
+    return;
+  }
+  /* [UG-WEB-04][iter2] Синхронизация черновика кассы между вкладками. */
+  if(e.key === "ug:cash_draft"){
+    if(currentRoute === "cash") renderRoute();
     return;
   }
 });
