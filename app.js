@@ -530,8 +530,7 @@ function normalizeShift(s){
   if(!s || typeof s !== "object") return null;
   var date = String(s.date || "").slice(0, 10);
   if(!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
-  /* [UG-WEB-07][iter4] closed_at: null — открытая смена, ISO-строка — закрытая.
-     Поле необязательное: старые смены без него читаются как открытые. */
+  /* [UG-WEB-07][iter7] closed_at: null — открытая смена, ISO-строка — закрытая. */
   var closedAt = null;
   if(s.closed_at !== null && s.closed_at !== undefined && s.closed_at !== "" && s.closed_at !== "null"){
     closedAt = String(s.closed_at);
@@ -1222,9 +1221,8 @@ function computeShiftTotal(shift){
   return { revenue: revenue, terminal: terminal, cash: cash, sbp: sbp, langame: langame, check_sum: check_sum, check_ok: check_ok, bothFilled: bothFilled, day: day, night: night };
 }
 
-/* [UG-WEB-07][iter4] Текущая смена — последняя по created_at (id) смена
-   без closed_at, у которой date === todayISO(). Вчерашние незакрытые
-   не считаются текущими — защита от «залипания» после переезда через полночь. */
+/* [UG-WEB-07][iter7] Текущая смена — последняя по created_at (id) смена
+   без closed_at, у которой date === todayISO(). */
 function findCurrentShift(){
   var today = todayISO();
   var best = null;
@@ -1242,7 +1240,6 @@ function findCurrentShift(){
   return best;
 }
 
-/* [UG-WEB-07][iter4] findTodayShift теперь возвращает именно текущую смену. */
 function findTodayShift(){ return findCurrentShift(); }
 function findShiftByDate(dateISO){ return shifts.filter(function(s){ return s.date === dateISO; })[0] || null; }
 
@@ -1341,9 +1338,10 @@ function updateCashDerived(partKey){
   var mark = ok ? "<span class=\"mark-dot ok\"></span>" : "<span class=\"mark-dot err\"></span>";
   var host = document.getElementById("cash_derived_" + partKey);
   if(!host) return;
+  /* [UG-WEB-07][iter7] Убрана пустая обёртка <span class="shift-check">. */
   host.innerHTML =
     "<div class=\"shift-derived\"><span class=\"lbl\">LanGame</span><span class=\"val\">" + formatMoney(langame) + " ₽</span></div>" +
-    "<div class=\"shift-derived\" style=\"margin-top:6px\"><span class=\"lbl\">Проверка (Терминал + LanGame + Наличные)</span><span class=\"val " + (ok ? "ok" : "err") + "\">" + formatMoney(check_sum) + " ₽ <span class=\"shift-check\">" + mark + "</span></span></div>";
+    "<div class=\"shift-derived\" style=\"margin-top:6px\"><span class=\"lbl\">Проверка (Терминал + LanGame + Наличные)</span><span class=\"val " + (ok ? "ok" : "err") + "\">" + formatMoney(check_sum) + " ₽ " + mark + "</span></div>";
   persistCashInputs();
 }
 
@@ -1412,6 +1410,16 @@ function bindCashPage(){
 }
 
 function saveCashPart(partKey){
+  /* [UG-WEB-07][iter7] Защита от второй смены за тот же день.
+     Если за сегодня уже есть закрытая смена — не даём создавать новую,
+     показываем сообщение и выходим. Если смена есть и не закрыта — пишем в неё.
+     Если смены за сегодня нет вообще (в т.ч. потому что закрытую удалили) — создаём. */
+  var todays = findShiftByDate(todayISO());
+  if(todays && todays.closed_at){
+    toast("Смена за сегодня уже закрыта. Начните новую после полуночи или удалите закрытую смену.", "err");
+    return;
+  }
+
   var revEl = document.getElementById("cash_" + partKey + "_revenue");
   var termEl = document.getElementById("cash_" + partKey + "_terminal");
   var cashEl = document.getElementById("cash_" + partKey + "_cash");
@@ -1431,8 +1439,6 @@ function saveCashPart(partKey){
     sbp: sbpRaw === "" ? 0 : (Number(sbpRaw) || 0),
     saved_at: new Date().toISOString()
   };
-  /* [UG-WEB-07][iter4] Берём текущую (незакрытую сегодняшнюю) смену.
-     Если её нет — создаём новую с явным closed_at: null. */
   var shift = findCurrentShift();
   if(!shift){
     var nid = 0; shifts.forEach(function(s){ if(s.id >= nid) nid = s.id+1; });
@@ -1442,7 +1448,6 @@ function saveCashPart(partKey){
   }
   shift[partKey] = part;
   persistShifts();
-  /* [UG-WEB-07][iter4] Если теперь заполнены обе части — закрываем смену. */
   if(shift.day && shift.night && !shift.closed_at){
     shift.closed_at = new Date().toISOString();
     persistShifts();
@@ -1494,8 +1499,6 @@ function saveShiftPart(partKey, dateISO){
     sbp: sbpRaw === "" ? 0 : (Number(sbpRaw) || 0),
     saved_at: new Date().toISOString()
   };
-  /* [UG-WEB-07][iter4] Правка существующей смены не «открывает» закрытую,
-     но если обе части есть и closed_at пуст — закрываем. */
   if(shift.day && shift.night && !shift.closed_at){
     shift.closed_at = new Date().toISOString();
   }
@@ -2146,7 +2149,6 @@ function mergeShiftsByDate(inShifts, mode){
     if(existing){
       existing.day = n.day;
       existing.night = n.night;
-      /* [UG-WEB-07][iter4] Перенос closed_at при импорте, если он есть. */
       if(n.closed_at) existing.closed_at = n.closed_at;
     } else {
       var nid = 0; shifts.forEach(function(x){ if(x.id >= nid) nid = x.id+1; });
