@@ -421,3 +421,74 @@ body:not([data-route="accounts"]) .top-search{display:none}
 .side-brand svg{flex-shrink:0}
 .h-brand svg{flex-shrink:0}
 @media (max-width:999px){.search-kbd{display:none}.top-search input{padding-right:40px}}
+
+/* ===== Р3: Касса, История, Настройки, модалки ===== */
+.check-ind{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;font-weight:700;white-space:nowrap}
+.check-ind.ok{color:var(--success)}.check-ind.err{color:var(--error)}.check-ind.muted{color:var(--text-muted)}
+.shift-derived .val .check-ind{margin-left:6px}
+.shift-list-item .check-ind{font-size:11.5px}
+.cash-grid{display:grid;gap:12px;grid-template-columns:minmax(0,1fr)}
+.cash-side{display:flex;flex-direction:column;gap:12px;min-width:0}
+.cash-grid .shift-block{margin-bottom:0}
+@media (min-width:1000px){.cash-grid{grid-template-columns:minmax(0,1fr) minmax(0,1fr) 360px;align-items:start}}
+.bento{background:linear-gradient(160deg,rgba(43,95,149,.28),var(--surface) 65%);border:1px solid var(--border-hover);border-radius:var(--radius-card);padding:18px;display:flex;flex-direction:column;gap:14px}
+.bento-label{font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--text-secondary)}
+.bento-total{font-size:36px;font-weight:700;letter-spacing:-1px;color:var(--text-primary);font-variant-numeric:tabular-nums;line-height:1.1}
+.bento-split{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.bento-split>div{background:var(--surface-input);border:1px solid var(--border);border-radius:var(--radius-control);padding:10px 12px;display:flex;flex-direction:column;gap:2px}
+.bento-split span{font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.6px;font-weight:700}
+.bento-split b{font-size:15px;font-variant-numeric:tabular-nums}
+.bento-actions{display:flex;flex-direction:column;gap:8px}
+.bento-actions .modal-actions{margin:0}
+.bento-actions .btn{width:100%}
+/* История */
+.hist-toolbar{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;margin-bottom:12px}
+.hist-toolbar .field{margin:0;flex:1 1 180px;max-width:280px}
+.hist-actions{display:flex;gap:8px;margin-left:auto;flex-wrap:wrap}
+.hist-table{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-card);overflow:hidden}
+.hist-row{display:grid;grid-template-columns:14px 120px minmax(0,1fr) 160px;gap:12px;align-items:center;padding:12px 16px;border-bottom:1px solid var(--border);font-size:13px}
+.hist-row:last-child{border-bottom:0}
+.hist-row .hist-dot{width:8px;height:8px;border-radius:50%;background:var(--info);margin:0}
+.hist-row.ok .hist-dot{background:var(--success)}.hist-row.warn .hist-dot{background:var(--warning)}.hist-row.danger .hist-dot{background:var(--error)}
+.hist-row .htime{color:var(--text-muted);font-size:12px;font-variant-numeric:tabular-nums;margin:0}
+.hist-row .htext{color:var(--text-primary);font-weight:500;min-width:0;word-break:break-word}
+.hist-row .hacc{color:var(--text-secondary)}
+.hist-head{background:var(--surface-elevated);font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--text-muted);font-weight:700;padding-top:9px;padding-bottom:9px}
+@media (max-width:719px){.hist-row{grid-template-columns:14px minmax(0,1fr)}.hist-row .htime,.hist-row .hacc{grid-column:2}.hist-head{display:none}}
+/* Настройки */
+.settings-grid{display:grid;gap:12px;grid-template-columns:minmax(0,1fr)}
+.settings-grid>.field{margin:0;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-card);padding:16px}
+@media (min-width:1000px){.settings-grid{grid-template-columns:repeat(2,minmax(0,1fr));align-items:start}}
+.section-head .title{font-size:22px;font-weight:700;letter-spacing:-.4px;margin-bottom:14px}
+/* Модалки: alert = bottom sheet на мобильном, по центру на десктопе */
+.seg{background:var(--surface-input);border:1px solid var(--border)}
+.alert-modal.perm::before{background:var(--permanent-ban)}
+.alert-modal.perm .icon{background:rgba(184,61,74,.16);color:var(--permanent-ban)}
+.alert-modal.perm h2{color:var(--permanent-ban)}
+@media (max-width:719px){
+  .alert-modal{width:100%;max-width:none!important;border-radius:22px 22px 0 0;padding:28px 20px calc(24px + env(safe-area-inset-bottom));max-height:90vh;overflow-y:auto;animation-name:slideUpModal}
+  .alert-modal::after{content:"";position:absolute;top:8px;left:50%;transform:translateX(-50%);width:40px;height:4px;border-radius:4px;background:var(--text-muted);opacity:.6}
+}
+@media (min-width:720px){.modal-bg{align-items:center}.alert-modal{max-width:440px}}
+.shift-list-item{flex-wrap:wrap;row-gap:4px}
+.shift-list-item .sli-date{flex:1 1 auto;white-space:nowrap}
+.shift-list-item .check-ind{flex-basis:100%}
+
+/* ===== Р4: состояния, доступность ===== */
+.loading-skel{max-width:720px;margin:0 auto;padding:calc(20px + env(safe-area-inset-top)) 16px 0}
+.btn[data-state="error"]{background:rgba(224,92,92,.13);color:var(--error);border-color:rgba(224,92,92,.25)}
+.storage-warn{background:var(--surface-elevated);border-color:var(--error)}
+.storage-warn .sw-title{color:var(--error)}
+.shift-empty-list.empty,.shift-empty-list{padding:28px 16px}
+.shift-empty-list .ico-empty{display:inline-flex;opacity:.35;margin-bottom:10px}
+.empty .ico-empty{color:var(--text-secondary)}
+.field .eye{width:44px;height:44px;right:2px}
+@media (pointer:coarse){.btn,.chip,.quick-btn,.issue-reveal,.issue-copy,.type-tab{min-height:44px}.hints-bar-close{width:44px;height:44px}}
+@media (prefers-reduced-motion:reduce){.skeleton{animation:none}}
+/* 1000–1279px: узкая область после sidebar — скрываем колонку «Категория», сужаем детали */
+@media (min-width:1000px) and (max-width:1279px){
+  .tbl th:nth-child(5),.tbl td:nth-child(5){display:none}
+  .tbl td.mut{max-width:150px}
+  .main-col{padding-left:20px;padding-right:20px}
+}
+.main-col{overflow-x:clip}
