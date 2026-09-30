@@ -289,9 +289,15 @@ input,textarea{-webkit-user-select:text;user-select:text}
 .tbl .nm{display:flex;align-items:center;gap:10px;font-weight:700;font-size:14.5px}
 .tbl td.mut{color:var(--text-2);font-size:13px;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 @media (prefers-reduced-motion:reduce){.card,.btn,.chip,.stat,.icon-btn{transition:none}.card:active,.btn:active,.chip:active,.stat:active,.icon-btn:active{transform:none}}
-/* [UG-WEB-03][iter1] Модификатор состояния кнопки «Отправить в Telegram».
-   Работает поверх .btn / .btn-ghost, не вводит новых цветов/размеров. */
+/* [UG-WEB-03][iter1] Модификатор состояния кнопки «Отправить в Telegram». */
 .btn-tg[data-state="loading"]{opacity:.7;pointer-events:none}
 .btn-tg[data-state="sent"]{background:rgba(91,196,110,0.13);color:var(--ok);border-color:rgba(91,196,110,0.2)}
 .btn-tg[data-state="error"]{background:rgba(224,92,92,0.13);color:var(--err);border-color:rgba(224,92,92,0.2)}
 .btn-tg:disabled{opacity:.5;cursor:not-allowed}
+
+/* [UG-WEB-06][iter3] Индикатор сходимости — цветной кружок.
+   Использует существующие переменные --ok / --err. */
+.mark-dot{display:inline-block;width:10px;height:10px;border-radius:50%;vertical-align:middle;flex-shrink:0}
+.mark-dot.ok{background:var(--ok);box-shadow:0 0 6px rgba(91,196,110,0.55)}
+.mark-dot.err{background:var(--err);box-shadow:0 0 6px rgba(224,92,92,0.55)}
+.mark-dot.muted{background:var(--text-3);opacity:.5}
