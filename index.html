@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src data:; connect-src https://ug-tg.gnomlapuh.workers.dev; base-uri 'none'; form-action 'none'">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#0a0e14">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Crect width='48' height='48' rx='12' fill='%231e3a5f'/%3E%3Ctext x='24' y='33' font-size='26' text-anchor='middle' fill='%234a9fd4' font-family='Arial' font-weight='bold'%3EUG%3C/text%3E%3C/svg%3E">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>United Gamers — SteamAcc</title>
+<link rel="preload" as="font" type="font/woff2" href="Inter-Regular.woff2" crossorigin>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div id="app" aria-busy="true"><div class="loading-skel" role="status" aria-label="Загрузка"><div class="skeleton" style="height:48px"></div><div class="skeleton" style="height:76px;margin-top:12px"></div><div class="skeleton" style="height:64px;margin-top:12px"></div><div class="skeleton" style="height:64px;margin-top:8px"></div></div></div>
+<noscript><div class="loading">Для работы нужен JavaScript.</div></noscript>
+<div id="modals"></div>
+<div id="toast"></div>
+<div id="storageWarn"></div>
+
+<button class="fab" id="fabAdd" aria-label="Добавить аккаунт" onclick="openEdit(null)">
+  <span class="ico-inline"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></span>
+  Добавить аккаунт
+</button>
+
+<script src="app.js"></script>
+</body>
+</html>
