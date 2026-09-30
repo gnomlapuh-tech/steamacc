@@ -245,12 +245,15 @@ function normalizeAccount(a){
   };
 }
 
+/* [UG-WEB-03.1] Добавлено обязательное поле beznal (Безналичные).
+   Для старых записей, где поля нет, — значение по умолчанию 0. */
 function normalizeShiftPart(p){
   if(!p) return null;
   return {
     revenue: Number(p.revenue) || 0,
     terminal: Number(p.terminal) || 0,
     cash: Number(p.cash) || 0,
+    beznal: Number(p.beznal) || 0,
     sbp: (p.sbp === null || p.sbp === undefined || p.sbp === "") ? 0 : (Number(p.sbp) || 0),
     saved_at: (p.saved_at === null || p.saved_at === undefined || p.saved_at === "") ? new Date().toISOString() : String(p.saved_at)
   };
@@ -668,8 +671,6 @@ function renderList(){
   updateStatsAndChips();
 }
 
-/* [UG-WEB-03][iter2][A] Упрощённая и корректная проверка hover.
-   closest("[data-id]") уже отсеивает всё лишнее, независимо от классов. */
 function bindHoverTracking(){
   var host = document.getElementById("app");
   if(!host) return;
@@ -910,19 +911,22 @@ function fmtDateShortRu(dateISO){
   return parts[2] + "." + parts[1];
 }
 
+/* [UG-WEB-03.1] LanGame считается от beznal, sbp в расчётах не участвует. */
 function computeShiftPart(p){
   if(!p) return null;
   var revenue = Number(p.revenue) || 0;
   var terminal = Number(p.terminal) || 0;
   var cash = Number(p.cash) || 0;
+  var beznal = Number(p.beznal) || 0;
   var sbp = Number(p.sbp) || 0;
-  var langame = sbp - terminal;
+  var langame = beznal - terminal;
   var check_sum = terminal + langame + cash;
   var check_ok = (revenue === check_sum);
   return {
     revenue: revenue,
     terminal: terminal,
     cash: cash,
+    beznal: beznal,
     sbp: sbp,
     langame: langame,
     check_sum: check_sum,
@@ -931,6 +935,7 @@ function computeShiftPart(p){
   };
 }
 
+/* [UG-WEB-03.1] beznal в итог, LanGame = суммарные Безналичные − суммарный Терминал. */
 function computeShiftTotal(shift){
   if(!shift) return null;
   var day = shift.day ? computeShiftPart(shift.day) : null;
@@ -939,12 +944,13 @@ function computeShiftTotal(shift){
   var revenue = (day ? day.revenue : 0) + (night ? night.revenue : 0);
   var terminal = (day ? day.terminal : 0) + (night ? night.terminal : 0);
   var cash = (day ? day.cash : 0) + (night ? night.cash : 0);
+  var beznal = (day ? day.beznal : 0) + (night ? night.beznal : 0);
   var sbp = (day ? day.sbp : 0) + (night ? night.sbp : 0);
-  var langame = sbp - terminal;
+  var langame = beznal - terminal;
   var check_sum = terminal + langame + cash;
   var bothFilled = !!(day && night);
   var check_ok = bothFilled ? (day.check_ok && night.check_ok) : (day ? day.check_ok : (night ? night.check_ok : false));
-  return { revenue: revenue, terminal: terminal, cash: cash, sbp: sbp, langame: langame, check_sum: check_sum, check_ok: check_ok, bothFilled: bothFilled, day: day, night: night };
+  return { revenue: revenue, terminal: terminal, cash: cash, beznal: beznal, sbp: sbp, langame: langame, check_sum: check_sum, check_ok: check_ok, bothFilled: bothFilled, day: day, night: night };
 }
 
 function findTodayShift(){ return findShiftByDate(todayISO()); }
@@ -959,7 +965,7 @@ function formatMoney(n){
   return sign + parts;
 }
 
-/* [UG-WEB-03][iter2][D] Дата передаётся явным аргументом, глобал убран. */
+/* [UG-WEB-03.1] Добавлена строка «Безналичные» перед «Оплата по СБП». */
 function shiftReportText(kind, part, dateISO){
   var title = kind === "day" ? "Отчёт за день" : "Отчёт за ночь";
   var dateRu = fmtDateShortRu(dateISO);
@@ -969,11 +975,13 @@ function shiftReportText(kind, part, dateISO){
   lines.push("Терминал — " + formatMoney(part.terminal) + " ₽");
   lines.push("LanGame — " + formatMoney(part.langame) + " ₽");
   lines.push("Наличные — " + formatMoney(part.cash) + " ₽");
+  lines.push("Безналичные — " + formatMoney(part.beznal) + " ₽");
   lines.push("Оплата по СБП — " + formatMoney(part.sbp) + " ₽");
   lines.push("Проверка: " + (part.check_ok ? "✓ сошлось" : "✗ не сходится"));
   return lines.join("\n");
 }
 
+/* [UG-WEB-03.1] Добавлена строка «Безналичные» в отчёт за сутки. */
 function shiftTotalReportText(shift){
   var t = computeShiftTotal(shift);
   if(!t) return "";
@@ -984,6 +992,7 @@ function shiftTotalReportText(shift){
   lines.push("Терминал — " + formatMoney(t.terminal) + " ₽");
   lines.push("LanGame — " + formatMoney(t.langame) + " ₽");
   lines.push("Наличные — " + formatMoney(t.cash) + " ₽");
+  lines.push("Безналичные — " + formatMoney(t.beznal) + " ₽");
   lines.push("Оплата по СБП — " + formatMoney(t.sbp) + " ₽");
   var mark = t.check_ok ? "✓ сошлось" : "✗ не сходится";
   if(!t.bothFilled){ mark += " (не все части заполнены)"; }
@@ -991,6 +1000,8 @@ function shiftTotalReportText(shift){
   return lines.join("\n");
 }
 
+/* [UG-WEB-03.1] 5 полей: 4 обязательных + опциональное СБП.
+   В сводке добавлена строка «Безналичные». */
 function renderShiftPartBlock(shift, partKey){
   var part = shift ? shift[partKey] : null;
   var title = partKey === "day" ? "День" : "Ночь";
@@ -1008,6 +1019,7 @@ function renderShiftPartBlock(shift, partKey){
           "<div class=\"sum-line\"><span class=\"k\">Терминал</span><span class=\"v\">" + formatMoney(c.terminal) + " ₽</span></div>" +
           "<div class=\"sum-line\"><span class=\"k\">LanGame</span><span class=\"v\">" + formatMoney(c.langame) + " ₽</span></div>" +
           "<div class=\"sum-line\"><span class=\"k\">Наличные</span><span class=\"v\">" + formatMoney(c.cash) + " ₽</span></div>" +
+          "<div class=\"sum-line\"><span class=\"k\">Безналичные</span><span class=\"v\">" + formatMoney(c.beznal) + " ₽</span></div>" +
           "<div class=\"sum-line\"><span class=\"k\">Оплата по СБП</span><span class=\"v\">" + formatMoney(c.sbp) + " ₽</span></div>" +
           "<div class=\"sum-line\"><span class=\"k\">Проверка</span><span class=\"v\">" + formatMoney(c.check_sum) + " ₽ " + mark + "</span></div>" +
         "</div>" +
@@ -1022,6 +1034,7 @@ function renderShiftPartBlock(shift, partKey){
         "<div class=\"shift-field\"><label>Выручка *</label><input id=\"cash_" + partKey + "_revenue\" type=\"number\" inputmode=\"decimal\" oninput=\"updateCashDerived('" + partKey + "')\"></div>" +
         "<div class=\"shift-field\"><label>Терминал *</label><input id=\"cash_" + partKey + "_terminal\" type=\"number\" inputmode=\"decimal\" oninput=\"updateCashDerived('" + partKey + "')\"></div>" +
         "<div class=\"shift-field\"><label>Наличные *</label><input id=\"cash_" + partKey + "_cash\" type=\"number\" inputmode=\"decimal\" oninput=\"updateCashDerived('" + partKey + "')\"></div>" +
+        "<div class=\"shift-field\"><label>Безналичные *</label><input id=\"cash_" + partKey + "_beznal\" type=\"number\" inputmode=\"decimal\" oninput=\"updateCashDerived('" + partKey + "')\"></div>" +
         "<div class=\"shift-field\"><label>Оплата по СБП</label><input id=\"cash_" + partKey + "_sbp\" type=\"number\" inputmode=\"decimal\" oninput=\"updateCashDerived('" + partKey + "')\"></div>" +
       "</div>" +
       "<div style=\"margin-top:10px\" id=\"cash_derived_" + partKey + "\"></div>" +
@@ -1031,12 +1044,13 @@ function renderShiftPartBlock(shift, partKey){
     "</div>";
 }
 
+/* [UG-WEB-03.1] LanGame = Безналичные − Терминал; СБП из формулы убрано. */
 function updateCashDerived(partKey){
   var rev = Number((document.getElementById("cash_" + partKey + "_revenue") || {}).value) || 0;
   var term = Number((document.getElementById("cash_" + partKey + "_terminal") || {}).value) || 0;
   var cash = Number((document.getElementById("cash_" + partKey + "_cash") || {}).value) || 0;
-  var sbp = Number((document.getElementById("cash_" + partKey + "_sbp") || {}).value) || 0;
-  var langame = sbp - term;
+  var beznal = Number((document.getElementById("cash_" + partKey + "_beznal") || {}).value) || 0;
+  var langame = beznal - term;
   var check_sum = term + langame + cash;
   var ok = (rev === check_sum);
   var mark = ok ? "<span class=\"mark ok\">✓</span>" : "<span class=\"mark err\">✗</span>";
@@ -1100,23 +1114,28 @@ function bindCashPage(){
   updateCashDerived("night");
 }
 
+/* [UG-WEB-03.1] Читаем и валидируем beznal как обязательное поле. */
 function saveCashPart(partKey){
   var revEl = document.getElementById("cash_" + partKey + "_revenue");
   var termEl = document.getElementById("cash_" + partKey + "_terminal");
   var cashEl = document.getElementById("cash_" + partKey + "_cash");
+  var beznalEl = document.getElementById("cash_" + partKey + "_beznal");
   var sbpEl = document.getElementById("cash_" + partKey + "_sbp");
-  if(!revEl || !termEl || !cashEl) return;
+  if(!revEl || !termEl || !cashEl || !beznalEl) return;
   var rev = String(revEl.value).trim();
   var term = String(termEl.value).trim();
   var cash = String(cashEl.value).trim();
+  var beznal = String(beznalEl.value).trim();
   var sbpRaw = sbpEl ? String(sbpEl.value).trim() : "";
   if(!rev){ toast("Заполните: Выручка", "err"); revEl.focus(); return; }
   if(!term){ toast("Заполните: Терминал", "err"); termEl.focus(); return; }
   if(!cash){ toast("Заполните: Наличные", "err"); cashEl.focus(); return; }
+  if(!beznal){ toast("Заполните: Безналичные", "err"); beznalEl.focus(); return; }
   var part = {
     revenue: Number(rev) || 0,
     terminal: Number(term) || 0,
     cash: Number(cash) || 0,
+    beznal: Number(beznal) || 0,
     sbp: sbpRaw === "" ? 0 : (Number(sbpRaw) || 0),
     saved_at: new Date().toISOString()
   };
@@ -1135,7 +1154,7 @@ function saveCashPart(partKey){
   renderRoute();
 }
 
-/* [UG-WEB-03][iter2][E] Единый редактор части смены — для текущей и для прошлой. */
+/* [UG-WEB-03.1] Редактор части смены — 5 полей в том же порядке. */
 function openShiftPartEditor(partKey, dateISO){
   dateISO = dateISO || todayISO();
   var shift = findShiftByDate(dateISO);
@@ -1148,6 +1167,7 @@ function openShiftPartEditor(partKey, dateISO){
   html += "<div class=\"shift-field\"><label>Выручка *</label><input id=\"edit_part_revenue\" type=\"number\" value=\"" + p.revenue + "\"></div>";
   html += "<div class=\"shift-field\"><label>Терминал *</label><input id=\"edit_part_terminal\" type=\"number\" value=\"" + p.terminal + "\"></div>";
   html += "<div class=\"shift-field\"><label>Наличные *</label><input id=\"edit_part_cash\" type=\"number\" value=\"" + p.cash + "\"></div>";
+  html += "<div class=\"shift-field\"><label>Безналичные *</label><input id=\"edit_part_beznal\" type=\"number\" value=\"" + p.beznal + "\"></div>";
   html += "<div class=\"shift-field\"><label>Оплата по СБП</label><input id=\"edit_part_sbp\" type=\"number\" value=\"" + p.sbp + "\"></div>";
   html += "</div>";
   html += "<div class=\"modal-actions\"><button class=\"btn btn-ghost\" onclick=\"closeModal()\">Отмена</button>";
@@ -1156,24 +1176,28 @@ function openShiftPartEditor(partKey, dateISO){
   document.getElementById("modals").innerHTML = html;
 }
 
+/* [UG-WEB-03.1] Читаем и валидируем beznal. */
 function saveShiftPart(partKey, dateISO){
   dateISO = dateISO || todayISO();
   var revEl = document.getElementById("edit_part_revenue");
   var termEl = document.getElementById("edit_part_terminal");
   var cashEl = document.getElementById("edit_part_cash");
+  var beznalEl = document.getElementById("edit_part_beznal");
   var sbpEl = document.getElementById("edit_part_sbp");
-  if(!revEl || !termEl || !cashEl) return;
+  if(!revEl || !termEl || !cashEl || !beznalEl) return;
   var rev = String(revEl.value).trim();
   var term = String(termEl.value).trim();
   var cash = String(cashEl.value).trim();
+  var beznal = String(beznalEl.value).trim();
   var sbpRaw = sbpEl ? String(sbpEl.value).trim() : "";
-  if(!rev || !term || !cash){ toast("Заполните обязательные поля", "err"); return; }
+  if(!rev || !term || !cash || !beznal){ toast("Заполните обязательные поля", "err"); return; }
   var shift = findShiftByDate(dateISO);
   if(!shift){ toast("Смена не найдена", "err"); return; }
   shift[partKey] = {
     revenue: Number(rev) || 0,
     terminal: Number(term) || 0,
     cash: Number(cash) || 0,
+    beznal: Number(beznal) || 0,
     sbp: sbpRaw === "" ? 0 : (Number(sbpRaw) || 0),
     saved_at: new Date().toISOString()
   };
@@ -1634,10 +1658,6 @@ function importData(){
     });
   }
 
-  /* [UG-WEB-03][iter2][B] Различаем:
-     - data.shifts === undefined → cleanShifts = null (поля нет — не трогаем);
-     - data.shifts === []        → cleanShifts = []   (пусто — при replace очищаем);
-     - data.shifts === [..]      → массив. */
   var cleanShifts = null;
   if(Array.isArray(data.shifts)){
     cleanShifts = [];
@@ -1802,10 +1822,6 @@ function mapCategories(inCats, mode){
   return idMap;
 }
 
-/* [UG-WEB-03][iter2][B] null и [] — разные состояния.
-   null  — поля нет в файле: не трогаем (даже в replace).
-   []    — поле явно пустое: в replace очищаем, в merge не трогаем.
-   [..]  — replace: заменить; merge: обновить по дате/добавить. */
 function mergeShiftsByDate(inShifts, mode){
   if(inShifts == null){ return; }
   if(mode === "replace"){
