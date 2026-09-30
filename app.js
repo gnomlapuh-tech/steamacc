@@ -30,6 +30,199 @@ function lsGetJson(key, fallback){
 function lsSetJson(key, val){ return lsSet(key, JSON.stringify(val)); }
 
 /* ============================================================
+ * Telegram Worker (UG-WEB-03)
+ * ============================================================ */
+
+/* [UG-WEB-03][iter1] Единственное место, где «живёт» хост Worker'а.
+   Реальный хост Заказчик вписывает в ДВУХ местах:
+   1) в <meta Content-Security-Policy> в index.html — connect-src https://<хост>;
+   2) в Настройках приложения — полный URL воркера (сохраняется в ug:telegram_worker_url).
+   Ниже — только тексты-подсказки и ключ хранилища, сам хост нигде не зашит. */
+var TG_WORKER_URL_KEY = "telegram_worker_url";
+var TG_WORKER_HOST_HINT = "например: https://ug-tg.<ваш-subdomain>.workers.dev";
+var TG_SEND_TIMEOUT_MS = 10000;
+
+function telegramWorkerUrl(){
+  var v = lsGet(TG_WORKER_URL_KEY);
+  return v == null ? "" : String(v).trim();
+}
+
+function saveTelegramWorkerUrlQuiet(){
+  var el = document.getElementById("tg_worker_url");
+  if(!el) return;
+  var v = String(el.value || "").trim();
+  lsSet(TG_WORKER_URL_KEY, v);
+}
+
+function saveTelegramWorkerUrl(){
+  var el = document.getElementById("tg_worker_url");
+  if(!el) return;
+  var v = String(el.value || "").trim();
+  if(v && !/^https:\/\//i.test(v)){
+    toast("URL должен начинаться с https://", "err");
+    return;
+  }
+  lsSet(TG_WORKER_URL_KEY, v);
+  toast(v ? "URL Worker'а сохранён" : "URL Worker'а очищен", "ok");
+  addLog("Настройки: URL Worker'а " + (v ? "сохранён" : "очищен"), "info");
+  renderRoute();
+}
+
+function tgBtnSetState(btnEl, state, label){
+  if(!btnEl) return;
+  if(state === "idle"){
+    btnEl.disabled = false;
+    btnEl.removeAttribute("data-state");
+    if(label != null) btnEl.textContent = label;
+    return;
+  }
+  btnEl.setAttribute("data-state", state);
+  if(state === "loading"){ btnEl.disabled = true; if(label != null) btnEl.textContent = label; }
+  else if(state === "sent"){ btnEl.disabled = true; if(label != null) btnEl.textContent = label; }
+  else if(state === "error"){ btnEl.disabled = false; if(label != null) btnEl.textContent = label; }
+}
+
+/* Отправка текста в Worker. ES5 + fetch/Promise/AbortController. */
+function sendShiftReportToTelegram(text, btnEl){
+  var url = telegramWorkerUrl();
+  if(!url){ toast("Укажите URL Worker'а в Настройках", "err"); return; }
+  if(!text){ toast("Нет данных для отправки", "err"); return; }
+
+  var originalLabel = "Отправить отчёт в Telegram";
+  tgBtnSetState(btnEl, "loading", "Отправка…");
+
+  var didTimeout = false;
+  var timer = null;
+  var ctrl = null;
+  var signal;
+  try{
+    if(typeof AbortController === "function"){
+      ctrl = new AbortController();
+      signal = ctrl.signal;
+    }
+  }catch(e){ ctrl = null; }
+
+  function done(ok, errMsg){
+    if(timer){ clearTimeout(timer); timer = null; }
+    if(didTimeout && !ok) return;
+    if(ok){
+      tgBtnSetState(btnEl, "sent", "Отправлено");
+      toast("Отчёт отправлен в Telegram", "ok");
+      addLog("Отчёт отправлен в Telegram", "ok");
+      setTimeout(function(){
+        tgBtnSetState(btnEl, "idle", originalLabel);
+      }, 2000);
+    } else {
+      tgBtnSetState(btnEl, "error", "Не отправлено");
+      toast("Не удалось отправить: " + (errMsg || "ошибка"), "err");
+      addLog("Ошибка отправки в Telegram", "error");
+      tgBtnSetState(btnEl, "idle", originalLabel);
+    }
+  }
+
+  var fetchOpts = {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text: text })
+  };
+  if(signal){ fetchOpts.signal = signal; }
+
+  var timeoutPromise = new Promise(function(_, reject){
+    timer = setTimeout(function(){
+      didTimeout = true;
+      if(ctrl){ try{ ctrl.abort(); }catch(e){} }
+      reject(new Error("таймаут " + (TG_SEND_TIMEOUT_MS / 1000) + "с"));
+    }, TG_SEND_TIMEOUT_MS);
+  });
+
+  var fetchPromise = fetch(url, fetchOpts).then(function(resp){
+    return resp.text().then(function(raw){
+      var data = null;
+      try{ data = raw ? JSON.parse(raw) : null; }catch(e){ data = null; }
+      if(!resp.ok){
+        var msg = (data && data.error) ? String(data.error) : ("HTTP " + resp.status);
+        throw new Error(msg);
+      }
+      if(!data || data.ok !== true){
+        var msg2 = (data && data.error) ? String(data.error) : "ответ не ok";
+        throw new Error(msg2);
+      }
+      return true;
+    });
+  });
+
+  Promise.race([fetchPromise, timeoutPromise]).then(function(){
+    done(true);
+  }).catch(function(err){
+    done(false, err && err.message ? err.message : "ошибка сети");
+  });
+}
+
+/* Собрать текст и отправить. kind: "total" | "single" */
+function sendCashReport(kind, btnEl){
+  var shift = findTodayShift();
+  if(!shift){ toast("Нет данных", "err"); return; }
+  var text = "";
+  if(kind === "total" || (shift.day && shift.night)){
+    text = shiftTotalReportText(shift);
+  } else if(shift.day){
+    text = shiftReportText("day", computeShiftPart(shift.day), shift.date);
+  } else if(shift.night){
+    text = shiftReportText("night", computeShiftPart(shift.night), shift.date);
+  }
+  if(!text){ toast("Нет данных", "err"); return; }
+  sendShiftReportToTelegram(text, btnEl);
+}
+
+/* Ping воркера: GET, ожидаем {ok:true} */
+function checkTelegramWorker(btnEl){
+  var url = telegramWorkerUrl();
+  if(!url){ toast("Сначала сохраните URL Worker'а", "err"); return; }
+  var orig = btnEl ? btnEl.textContent : "";
+  if(btnEl){ btnEl.disabled = true; btnEl.textContent = "Проверка…"; }
+
+  var didTimeout = false;
+  var timer = null;
+  var ctrl = null;
+  var signal;
+  try{
+    if(typeof AbortController === "function"){ ctrl = new AbortController(); signal = ctrl.signal; }
+  }catch(e){ ctrl = null; }
+
+  function finish(ok, msg){
+    if(timer){ clearTimeout(timer); timer = null; }
+    if(didTimeout && !ok) return;
+    if(btnEl){ btnEl.disabled = false; btnEl.textContent = orig || "Проверить связь"; }
+    if(ok){ toast("Связь с Worker'ом есть", "ok"); addLog("Telegram: связь с Worker'ом проверена", "ok"); }
+    else { toast("Нет связи: " + (msg || "ошибка"), "err"); addLog("Telegram: нет связи с Worker'ом", "error"); }
+  }
+
+  var opts = { method: "GET" };
+  if(signal){ opts.signal = signal; }
+
+  var t = new Promise(function(_, rej){
+    timer = setTimeout(function(){
+      didTimeout = true;
+      if(ctrl){ try{ ctrl.abort(); }catch(e){} }
+      rej(new Error("таймаут"));
+    }, TG_SEND_TIMEOUT_MS);
+  });
+
+  var p = fetch(url, opts).then(function(resp){
+    return resp.text().then(function(raw){
+      var data = null;
+      try{ data = raw ? JSON.parse(raw) : null; }catch(e){ data = null; }
+      if(!resp.ok) throw new Error((data && data.error) ? String(data.error) : ("HTTP " + resp.status));
+      if(!data || data.ok !== true) throw new Error((data && data.error) ? String(data.error) : "ответ не ok");
+      return true;
+    });
+  });
+
+  Promise.race([p, t]).then(function(){ finish(true); })
+    .catch(function(err){ finish(false, err && err.message ? err.message : "ошибка сети"); });
+}
+
+/* ============================================================
  * Глобальное состояние
  * ============================================================ */
 
@@ -245,15 +438,12 @@ function normalizeAccount(a){
   };
 }
 
-/* [UG-WEB-03.1] Добавлено обязательное поле beznal (Безналичные).
-   Для старых записей, где поля нет, — значение по умолчанию 0. */
 function normalizeShiftPart(p){
   if(!p) return null;
   return {
     revenue: Number(p.revenue) || 0,
     terminal: Number(p.terminal) || 0,
     cash: Number(p.cash) || 0,
-    beznal: Number(p.beznal) || 0,
     sbp: (p.sbp === null || p.sbp === undefined || p.sbp === "") ? 0 : (Number(p.sbp) || 0),
     saved_at: (p.saved_at === null || p.saved_at === undefined || p.saved_at === "") ? new Date().toISOString() : String(p.saved_at)
   };
@@ -911,22 +1101,19 @@ function fmtDateShortRu(dateISO){
   return parts[2] + "." + parts[1];
 }
 
-/* [UG-WEB-03.1] LanGame считается от beznal, sbp в расчётах не участвует. */
 function computeShiftPart(p){
   if(!p) return null;
   var revenue = Number(p.revenue) || 0;
   var terminal = Number(p.terminal) || 0;
   var cash = Number(p.cash) || 0;
-  var beznal = Number(p.beznal) || 0;
   var sbp = Number(p.sbp) || 0;
-  var langame = beznal - terminal;
+  var langame = sbp - terminal;
   var check_sum = terminal + langame + cash;
   var check_ok = (revenue === check_sum);
   return {
     revenue: revenue,
     terminal: terminal,
     cash: cash,
-    beznal: beznal,
     sbp: sbp,
     langame: langame,
     check_sum: check_sum,
@@ -935,7 +1122,6 @@ function computeShiftPart(p){
   };
 }
 
-/* [UG-WEB-03.1] beznal в итог, LanGame = суммарные Безналичные − суммарный Терминал. */
 function computeShiftTotal(shift){
   if(!shift) return null;
   var day = shift.day ? computeShiftPart(shift.day) : null;
@@ -944,13 +1130,12 @@ function computeShiftTotal(shift){
   var revenue = (day ? day.revenue : 0) + (night ? night.revenue : 0);
   var terminal = (day ? day.terminal : 0) + (night ? night.terminal : 0);
   var cash = (day ? day.cash : 0) + (night ? night.cash : 0);
-  var beznal = (day ? day.beznal : 0) + (night ? night.beznal : 0);
   var sbp = (day ? day.sbp : 0) + (night ? night.sbp : 0);
-  var langame = beznal - terminal;
+  var langame = sbp - terminal;
   var check_sum = terminal + langame + cash;
   var bothFilled = !!(day && night);
   var check_ok = bothFilled ? (day.check_ok && night.check_ok) : (day ? day.check_ok : (night ? night.check_ok : false));
-  return { revenue: revenue, terminal: terminal, cash: cash, beznal: beznal, sbp: sbp, langame: langame, check_sum: check_sum, check_ok: check_ok, bothFilled: bothFilled, day: day, night: night };
+  return { revenue: revenue, terminal: terminal, cash: cash, sbp: sbp, langame: langame, check_sum: check_sum, check_ok: check_ok, bothFilled: bothFilled, day: day, night: night };
 }
 
 function findTodayShift(){ return findShiftByDate(todayISO()); }
@@ -965,7 +1150,6 @@ function formatMoney(n){
   return sign + parts;
 }
 
-/* [UG-WEB-03.1] Добавлена строка «Безналичные» перед «Оплата по СБП». */
 function shiftReportText(kind, part, dateISO){
   var title = kind === "day" ? "Отчёт за день" : "Отчёт за ночь";
   var dateRu = fmtDateShortRu(dateISO);
@@ -975,13 +1159,11 @@ function shiftReportText(kind, part, dateISO){
   lines.push("Терминал — " + formatMoney(part.terminal) + " ₽");
   lines.push("LanGame — " + formatMoney(part.langame) + " ₽");
   lines.push("Наличные — " + formatMoney(part.cash) + " ₽");
-  lines.push("Безналичные — " + formatMoney(part.beznal) + " ₽");
   lines.push("Оплата по СБП — " + formatMoney(part.sbp) + " ₽");
   lines.push("Проверка: " + (part.check_ok ? "✓ сошлось" : "✗ не сходится"));
   return lines.join("\n");
 }
 
-/* [UG-WEB-03.1] Добавлена строка «Безналичные» в отчёт за сутки. */
 function shiftTotalReportText(shift){
   var t = computeShiftTotal(shift);
   if(!t) return "";
@@ -992,7 +1174,6 @@ function shiftTotalReportText(shift){
   lines.push("Терминал — " + formatMoney(t.terminal) + " ₽");
   lines.push("LanGame — " + formatMoney(t.langame) + " ₽");
   lines.push("Наличные — " + formatMoney(t.cash) + " ₽");
-  lines.push("Безналичные — " + formatMoney(t.beznal) + " ₽");
   lines.push("Оплата по СБП — " + formatMoney(t.sbp) + " ₽");
   var mark = t.check_ok ? "✓ сошлось" : "✗ не сходится";
   if(!t.bothFilled){ mark += " (не все части заполнены)"; }
@@ -1000,8 +1181,6 @@ function shiftTotalReportText(shift){
   return lines.join("\n");
 }
 
-/* [UG-WEB-03.1] 5 полей: 4 обязательных + опциональное СБП.
-   В сводке добавлена строка «Безналичные». */
 function renderShiftPartBlock(shift, partKey){
   var part = shift ? shift[partKey] : null;
   var title = partKey === "day" ? "День" : "Ночь";
@@ -1019,7 +1198,6 @@ function renderShiftPartBlock(shift, partKey){
           "<div class=\"sum-line\"><span class=\"k\">Терминал</span><span class=\"v\">" + formatMoney(c.terminal) + " ₽</span></div>" +
           "<div class=\"sum-line\"><span class=\"k\">LanGame</span><span class=\"v\">" + formatMoney(c.langame) + " ₽</span></div>" +
           "<div class=\"sum-line\"><span class=\"k\">Наличные</span><span class=\"v\">" + formatMoney(c.cash) + " ₽</span></div>" +
-          "<div class=\"sum-line\"><span class=\"k\">Безналичные</span><span class=\"v\">" + formatMoney(c.beznal) + " ₽</span></div>" +
           "<div class=\"sum-line\"><span class=\"k\">Оплата по СБП</span><span class=\"v\">" + formatMoney(c.sbp) + " ₽</span></div>" +
           "<div class=\"sum-line\"><span class=\"k\">Проверка</span><span class=\"v\">" + formatMoney(c.check_sum) + " ₽ " + mark + "</span></div>" +
         "</div>" +
@@ -1034,7 +1212,6 @@ function renderShiftPartBlock(shift, partKey){
         "<div class=\"shift-field\"><label>Выручка *</label><input id=\"cash_" + partKey + "_revenue\" type=\"number\" inputmode=\"decimal\" oninput=\"updateCashDerived('" + partKey + "')\"></div>" +
         "<div class=\"shift-field\"><label>Терминал *</label><input id=\"cash_" + partKey + "_terminal\" type=\"number\" inputmode=\"decimal\" oninput=\"updateCashDerived('" + partKey + "')\"></div>" +
         "<div class=\"shift-field\"><label>Наличные *</label><input id=\"cash_" + partKey + "_cash\" type=\"number\" inputmode=\"decimal\" oninput=\"updateCashDerived('" + partKey + "')\"></div>" +
-        "<div class=\"shift-field\"><label>Безналичные *</label><input id=\"cash_" + partKey + "_beznal\" type=\"number\" inputmode=\"decimal\" oninput=\"updateCashDerived('" + partKey + "')\"></div>" +
         "<div class=\"shift-field\"><label>Оплата по СБП</label><input id=\"cash_" + partKey + "_sbp\" type=\"number\" inputmode=\"decimal\" oninput=\"updateCashDerived('" + partKey + "')\"></div>" +
       "</div>" +
       "<div style=\"margin-top:10px\" id=\"cash_derived_" + partKey + "\"></div>" +
@@ -1044,13 +1221,12 @@ function renderShiftPartBlock(shift, partKey){
     "</div>";
 }
 
-/* [UG-WEB-03.1] LanGame = Безналичные − Терминал; СБП из формулы убрано. */
 function updateCashDerived(partKey){
   var rev = Number((document.getElementById("cash_" + partKey + "_revenue") || {}).value) || 0;
   var term = Number((document.getElementById("cash_" + partKey + "_terminal") || {}).value) || 0;
   var cash = Number((document.getElementById("cash_" + partKey + "_cash") || {}).value) || 0;
-  var beznal = Number((document.getElementById("cash_" + partKey + "_beznal") || {}).value) || 0;
-  var langame = beznal - term;
+  var sbp = Number((document.getElementById("cash_" + partKey + "_sbp") || {}).value) || 0;
+  var langame = sbp - term;
   var check_sum = term + langame + cash;
   var ok = (rev === check_sum);
   var mark = ok ? "<span class=\"mark ok\">✓</span>" : "<span class=\"mark err\">✗</span>";
@@ -1059,6 +1235,18 @@ function updateCashDerived(partKey){
   host.innerHTML =
     "<div class=\"shift-derived\"><span class=\"lbl\">LanGame</span><span class=\"val\">" + formatMoney(langame) + " ₽</span></div>" +
     "<div class=\"shift-derived\" style=\"margin-top:6px\"><span class=\"lbl\">Проверка (Терминал + LanGame + Наличные)</span><span class=\"val " + (ok ? "ok" : "err") + "\">" + formatMoney(check_sum) + " ₽ <span class=\"shift-check\">" + mark + "</span></span></div>";
+}
+
+/* [UG-WEB-03][iter1] Кнопка «Отправить отчёт в Telegram».
+   Добавлена в оба блока (итог за сутки и одиночная часть).
+   Если URL воркера не задан — кнопка disabled с title-подсказкой. */
+function renderTelegramSendButton(scope){
+  var url = telegramWorkerUrl();
+  var dis = url ? "" : " disabled";
+  var title = url ? "" : " title=\"Укажите URL Worker'а в Настройках\"";
+  return "<div class=\"modal-actions\" style=\"margin-top:12px\">" +
+    "<button class=\"btn btn-ghost btn-tg\" id=\"tg-send-" + scope + "\" onclick=\"sendCashReport('" + (scope === "total" ? "total" : "single") + "', this)\"" + dis + title + ">Отправить отчёт в Telegram</button>" +
+  "</div>";
 }
 
 function renderCashPage(){
@@ -1083,6 +1271,7 @@ function renderCashPage(){
       "<div class=\"modal-actions\" style=\"margin-top:12px\">" +
         "<button class=\"btn btn-ghost\" onclick=\"copyShiftReport('total')\">Скопировать отчёт</button>" +
       "</div>" +
+      renderTelegramSendButton("total") +
     "</div>";
   } else if(shift && (shift.day || shift.night)){
     var reportText2 = shift.day
@@ -1096,6 +1285,7 @@ function renderCashPage(){
       "<div class=\"modal-actions\" style=\"margin-top:12px\">" +
         "<button class=\"btn btn-ghost\" onclick=\"copyShiftReport('single')\">Скопировать отчёт</button>" +
       "</div>" +
+      renderTelegramSendButton("single") +
     "</div>";
   }
 
@@ -1114,28 +1304,23 @@ function bindCashPage(){
   updateCashDerived("night");
 }
 
-/* [UG-WEB-03.1] Читаем и валидируем beznal как обязательное поле. */
 function saveCashPart(partKey){
   var revEl = document.getElementById("cash_" + partKey + "_revenue");
   var termEl = document.getElementById("cash_" + partKey + "_terminal");
   var cashEl = document.getElementById("cash_" + partKey + "_cash");
-  var beznalEl = document.getElementById("cash_" + partKey + "_beznal");
   var sbpEl = document.getElementById("cash_" + partKey + "_sbp");
-  if(!revEl || !termEl || !cashEl || !beznalEl) return;
+  if(!revEl || !termEl || !cashEl) return;
   var rev = String(revEl.value).trim();
   var term = String(termEl.value).trim();
   var cash = String(cashEl.value).trim();
-  var beznal = String(beznalEl.value).trim();
   var sbpRaw = sbpEl ? String(sbpEl.value).trim() : "";
   if(!rev){ toast("Заполните: Выручка", "err"); revEl.focus(); return; }
   if(!term){ toast("Заполните: Терминал", "err"); termEl.focus(); return; }
   if(!cash){ toast("Заполните: Наличные", "err"); cashEl.focus(); return; }
-  if(!beznal){ toast("Заполните: Безналичные", "err"); beznalEl.focus(); return; }
   var part = {
     revenue: Number(rev) || 0,
     terminal: Number(term) || 0,
     cash: Number(cash) || 0,
-    beznal: Number(beznal) || 0,
     sbp: sbpRaw === "" ? 0 : (Number(sbpRaw) || 0),
     saved_at: new Date().toISOString()
   };
@@ -1154,7 +1339,6 @@ function saveCashPart(partKey){
   renderRoute();
 }
 
-/* [UG-WEB-03.1] Редактор части смены — 5 полей в том же порядке. */
 function openShiftPartEditor(partKey, dateISO){
   dateISO = dateISO || todayISO();
   var shift = findShiftByDate(dateISO);
@@ -1167,7 +1351,6 @@ function openShiftPartEditor(partKey, dateISO){
   html += "<div class=\"shift-field\"><label>Выручка *</label><input id=\"edit_part_revenue\" type=\"number\" value=\"" + p.revenue + "\"></div>";
   html += "<div class=\"shift-field\"><label>Терминал *</label><input id=\"edit_part_terminal\" type=\"number\" value=\"" + p.terminal + "\"></div>";
   html += "<div class=\"shift-field\"><label>Наличные *</label><input id=\"edit_part_cash\" type=\"number\" value=\"" + p.cash + "\"></div>";
-  html += "<div class=\"shift-field\"><label>Безналичные *</label><input id=\"edit_part_beznal\" type=\"number\" value=\"" + p.beznal + "\"></div>";
   html += "<div class=\"shift-field\"><label>Оплата по СБП</label><input id=\"edit_part_sbp\" type=\"number\" value=\"" + p.sbp + "\"></div>";
   html += "</div>";
   html += "<div class=\"modal-actions\"><button class=\"btn btn-ghost\" onclick=\"closeModal()\">Отмена</button>";
@@ -1176,28 +1359,24 @@ function openShiftPartEditor(partKey, dateISO){
   document.getElementById("modals").innerHTML = html;
 }
 
-/* [UG-WEB-03.1] Читаем и валидируем beznal. */
 function saveShiftPart(partKey, dateISO){
   dateISO = dateISO || todayISO();
   var revEl = document.getElementById("edit_part_revenue");
   var termEl = document.getElementById("edit_part_terminal");
   var cashEl = document.getElementById("edit_part_cash");
-  var beznalEl = document.getElementById("edit_part_beznal");
   var sbpEl = document.getElementById("edit_part_sbp");
-  if(!revEl || !termEl || !cashEl || !beznalEl) return;
+  if(!revEl || !termEl || !cashEl) return;
   var rev = String(revEl.value).trim();
   var term = String(termEl.value).trim();
   var cash = String(cashEl.value).trim();
-  var beznal = String(beznalEl.value).trim();
   var sbpRaw = sbpEl ? String(sbpEl.value).trim() : "";
-  if(!rev || !term || !cash || !beznal){ toast("Заполните обязательные поля", "err"); return; }
+  if(!rev || !term || !cash){ toast("Заполните обязательные поля", "err"); return; }
   var shift = findShiftByDate(dateISO);
   if(!shift){ toast("Смена не найдена", "err"); return; }
   shift[partKey] = {
     revenue: Number(rev) || 0,
     terminal: Number(term) || 0,
     cash: Number(cash) || 0,
-    beznal: Number(beznal) || 0,
     sbp: sbpRaw === "" ? 0 : (Number(sbpRaw) || 0),
     saved_at: new Date().toISOString()
   };
@@ -1410,6 +1589,17 @@ function renderSettingsPage(){
 
   html += "<div class=\"field\"><label>Категории</label>";
   html += "<button class=\"btn btn-ghost menu-action\" onclick=\"openCategoryManager()\">" + icoWrap(ICO.folder) + " Управление категориями</button>";
+  html += "</div>";
+
+  /* [UG-WEB-03][iter1] Блок Telegram: URL Worker'а + сохранить + проверить связь. */
+  var tgUrl = telegramWorkerUrl();
+  html += "<div class=\"field\"><label>Telegram — отправка отчётов</label>";
+  html += "<div class=\"issue-hint\">" + icoWrap(ICO.info) + "<div>Вставьте URL вашего Cloudflare Worker'а (например, " + esc(TG_WORKER_HOST_HINT) + "). Хост должен совпадать с <code>connect-src</code> в CSP. Токен бота здесь не хранится.</div></div>";
+  html += "<input id=\"tg_worker_url\" type=\"url\" inputmode=\"url\" autocomplete=\"off\" spellcheck=\"false\" placeholder=\"" + esc(TG_WORKER_HOST_HINT) + "\" value=\"" + esc(tgUrl) + "\" oninput=\"saveTelegramWorkerUrlQuiet()\" onblur=\"saveTelegramWorkerUrlQuiet()\" style=\"margin-top:8px\">";
+  html += "<div class=\"modal-actions\" style=\"margin-top:10px\">";
+  html += "<button class=\"btn btn-ghost\" onclick=\"saveTelegramWorkerUrl()\">" + icoWrap(ICO.check) + " Сохранить</button>";
+  html += "<button class=\"btn btn-primary\" onclick=\"checkTelegramWorker(this)\">" + icoWrap(ICO.play) + " Проверить связь</button>";
+  html += "</div>";
   html += "</div>";
 
   html += "<div class=\"field\"><label>Массовые действия</label>";
@@ -2134,6 +2324,11 @@ window.addEventListener("storage", function(e){
   if(e.key === "ug:actionLog"){
     var log = safeJson(e.newValue || "[]", []);
     if(Array.isArray(log)) actionLog = log;
+    return;
+  }
+  /* [UG-WEB-03][iter1] Синхронизация URL Worker'а между вкладками. */
+  if(e.key === "ug:telegram_worker_url"){
+    if(currentRoute === "settings" || currentRoute === "cash") renderRoute();
     return;
   }
 });
