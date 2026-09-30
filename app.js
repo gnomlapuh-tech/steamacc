@@ -97,8 +97,6 @@ function cashDraftFieldValue(partKey, field){
   return (v === null || v === undefined) ? null : String(v);
 }
 
-/* Считать текущие значения из DOM инпутов «Кассы».
-   Возвращает объект с частями, в которых есть хоть одно непустое значение. */
 function snapshotCashInputs(){
   var out = {};
   ["day", "night"].forEach(function(partKey){
@@ -117,8 +115,6 @@ function snapshotCashInputs(){
   return out;
 }
 
-/* Записать текущее состояние инпутов в ug:cash_draft.
-   Вызывается при oninput в полях (через updateCashDerived). */
 function persistCashInputs(){
   var snap = snapshotCashInputs();
   writeCashDraft(snap);
@@ -1246,7 +1242,8 @@ function shiftReportText(kind, part, dateISO){
   lines.push("Терминал — " + formatMoney(part.terminal) + " ₽");
   lines.push("LanGame — " + formatMoney(part.langame) + " ₽");
   lines.push("Наличные — " + formatMoney(part.cash) + " ₽");
-  lines.push("Оплата по СБП — " + formatMoney(part.sbp) + " ₽");
+  /* [UG-WEB-05][iter3] Пользовательское название «Безнал». Ключ данных — sbp, не меняется. */
+  lines.push("Безнал — " + formatMoney(part.sbp) + " ₽");
   lines.push("Проверка: " + (part.check_ok ? "✓ сошлось" : "✗ не сходится"));
   return lines.join("\n");
 }
@@ -1261,7 +1258,8 @@ function shiftTotalReportText(shift){
   lines.push("Терминал — " + formatMoney(t.terminal) + " ₽");
   lines.push("LanGame — " + formatMoney(t.langame) + " ₽");
   lines.push("Наличные — " + formatMoney(t.cash) + " ₽");
-  lines.push("Оплата по СБП — " + formatMoney(t.sbp) + " ₽");
+  /* [UG-WEB-05][iter3] Пользовательское название «Безнал». Ключ данных — sbp, не меняется. */
+  lines.push("Безнал — " + formatMoney(t.sbp) + " ₽");
   var mark = t.check_ok ? "✓ сошлось" : "✗ не сходится";
   if(!t.bothFilled){ mark += " (не все части заполнены)"; }
   lines.push("Проверка: " + mark);
@@ -1273,7 +1271,8 @@ function renderShiftPartBlock(shift, partKey){
   var title = partKey === "day" ? "День" : "Ночь";
   if(part){
     var c = computeShiftPart(part);
-    var mark = c.check_ok ? "<span class=\"mark ok\">✓</span>" : "<span class=\"mark err\">✗</span>";
+    /* [UG-WEB-06][iter3] Визуальный индикатор — цветной кружок вместо ✓/✗. */
+    var mark = c.check_ok ? "<span class=\"mark-dot ok\"></span>" : "<span class=\"mark-dot err\"></span>";
     return "" +
       "<div class=\"shift-block\">" +
         "<div class=\"shift-block-head\">" +
@@ -1285,7 +1284,8 @@ function renderShiftPartBlock(shift, partKey){
           "<div class=\"sum-line\"><span class=\"k\">Терминал</span><span class=\"v\">" + formatMoney(c.terminal) + " ₽</span></div>" +
           "<div class=\"sum-line\"><span class=\"k\">LanGame</span><span class=\"v\">" + formatMoney(c.langame) + " ₽</span></div>" +
           "<div class=\"sum-line\"><span class=\"k\">Наличные</span><span class=\"v\">" + formatMoney(c.cash) + " ₽</span></div>" +
-          "<div class=\"sum-line\"><span class=\"k\">Оплата по СБП</span><span class=\"v\">" + formatMoney(c.sbp) + " ₽</span></div>" +
+          /* [UG-WEB-05][iter3] «Оплата по СБП» → «Безнал». */
+          "<div class=\"sum-line\"><span class=\"k\">Безнал</span><span class=\"v\">" + formatMoney(c.sbp) + " ₽</span></div>" +
           "<div class=\"sum-line\"><span class=\"k\">Проверка</span><span class=\"v\">" + formatMoney(c.check_sum) + " ₽ " + mark + "</span></div>" +
         "</div>" +
       "</div>";
@@ -1305,7 +1305,8 @@ function renderShiftPartBlock(shift, partKey){
         "<div class=\"shift-field\"><label>Выручка *</label><input id=\"cash_" + partKey + "_revenue\" type=\"number\" inputmode=\"decimal\" value=\"" + (vRev != null ? esc(vRev) : "") + "\" oninput=\"updateCashDerived('" + partKey + "')\"></div>" +
         "<div class=\"shift-field\"><label>Терминал *</label><input id=\"cash_" + partKey + "_terminal\" type=\"number\" inputmode=\"decimal\" value=\"" + (vTerm != null ? esc(vTerm) : "") + "\" oninput=\"updateCashDerived('" + partKey + "')\"></div>" +
         "<div class=\"shift-field\"><label>Наличные *</label><input id=\"cash_" + partKey + "_cash\" type=\"number\" inputmode=\"decimal\" value=\"" + (vCash != null ? esc(vCash) : "") + "\" oninput=\"updateCashDerived('" + partKey + "')\"></div>" +
-        "<div class=\"shift-field\"><label>Оплата по СБП</label><input id=\"cash_" + partKey + "_sbp\" type=\"number\" inputmode=\"decimal\" value=\"" + (vSbp != null ? esc(vSbp) : "") + "\" oninput=\"updateCashDerived('" + partKey + "')\"></div>" +
+        /* [UG-WEB-05][iter3] «Оплата по СБП» → «Безнал». id не меняем — на нём завязан черновик и сохранение. */
+        "<div class=\"shift-field\"><label>Безнал</label><input id=\"cash_" + partKey + "_sbp\" type=\"number\" inputmode=\"decimal\" value=\"" + (vSbp != null ? esc(vSbp) : "") + "\" oninput=\"updateCashDerived('" + partKey + "')\"></div>" +
       "</div>" +
       "<div style=\"margin-top:10px\" id=\"cash_derived_" + partKey + "\"></div>" +
       "<div class=\"modal-actions\" style=\"margin-top:14px\">" +
@@ -1322,7 +1323,8 @@ function updateCashDerived(partKey){
   var langame = sbp - term;
   var check_sum = term + langame + cash;
   var ok = (rev === check_sum);
-  var mark = ok ? "<span class=\"mark ok\">✓</span>" : "<span class=\"mark err\">✗</span>";
+  /* [UG-WEB-06][iter3] Живой расчёт — тоже кружок. */
+  var mark = ok ? "<span class=\"mark-dot ok\"></span>" : "<span class=\"mark-dot err\"></span>";
   var host = document.getElementById("cash_derived_" + partKey);
   if(!host) return;
   host.innerHTML =
@@ -1355,7 +1357,8 @@ function renderCashPage(){
   if(shift && shift.day && shift.night){
     var reportText = shiftTotalReportText(shift);
     var t = computeShiftTotal(shift);
-    var mark = t && t.check_ok ? "<span class=\"mark ok\">✓</span>" : "<span class=\"mark err\">✗</span>";
+    /* [UG-WEB-06][iter3] Заголовок итога — тоже кружок. */
+    var mark = t && t.check_ok ? "<span class=\"mark-dot ok\"></span>" : "<span class=\"mark-dot err\"></span>";
     html += "<div class=\"shift-block\">" +
       "<div class=\"shift-block-head\">" +
         "<div class=\"shift-block-title\">Итог за сутки " + mark + "</div>" +
@@ -1446,7 +1449,8 @@ function openShiftPartEditor(partKey, dateISO){
   html += "<div class=\"shift-field\"><label>Выручка *</label><input id=\"edit_part_revenue\" type=\"number\" value=\"" + p.revenue + "\"></div>";
   html += "<div class=\"shift-field\"><label>Терминал *</label><input id=\"edit_part_terminal\" type=\"number\" value=\"" + p.terminal + "\"></div>";
   html += "<div class=\"shift-field\"><label>Наличные *</label><input id=\"edit_part_cash\" type=\"number\" value=\"" + p.cash + "\"></div>";
-  html += "<div class=\"shift-field\"><label>Оплата по СБП</label><input id=\"edit_part_sbp\" type=\"number\" value=\"" + p.sbp + "\"></div>";
+  /* [UG-WEB-05][iter3] «Оплата по СБП» → «Безнал». */
+  html += "<div class=\"shift-field\"><label>Безнал</label><input id=\"edit_part_sbp\" type=\"number\" value=\"" + p.sbp + "\"></div>";
   html += "</div>";
   html += "<div class=\"modal-actions\"><button class=\"btn btn-ghost\" onclick=\"closeModal()\">Отмена</button>";
   html += "<button class=\"btn btn-primary\" onclick=\"saveShiftPart('" + partKey + "','" + dateISO + "')\">Сохранить</button></div>";
@@ -1509,11 +1513,12 @@ function renderShiftHistory(){
   shifts.forEach(function(s){
     var t = computeShiftTotal(s);
     var revText = t ? (formatMoney(t.revenue) + " ₽") : "—";
+    /* [UG-WEB-06][iter3] История смен — цветной кружок вместо ✓/✗/·. */
     var mark = "";
-    if(!t){ mark = "<span class=\"sli-mark muted\">·</span>"; }
-    else if(!t.bothFilled){ mark = "<span class=\"sli-mark muted\">·</span>"; }
-    else if(t.check_ok){ mark = "<span class=\"sli-mark ok\">✓</span>"; }
-    else { mark = "<span class=\"sli-mark err\">✗</span>"; }
+    if(!t){ mark = "<span class=\"mark-dot muted\"></span>"; }
+    else if(!t.bothFilled){ mark = "<span class=\"mark-dot muted\"></span>"; }
+    else if(t.check_ok){ mark = "<span class=\"mark-dot ok\"></span>"; }
+    else { mark = "<span class=\"mark-dot err\"></span>"; }
     var suffix = (t && !t.bothFilled) ? " <span style=\"color:var(--text-3);font-size:11px\">(не все части заполнены)</span>" : "";
     html += "<div class=\"shift-list-item\" onclick=\"openShiftDetail('" + s.date + "')\">" +
       "<div class=\"sli-date\">" + esc(fmtDateRu(s.date)) + suffix + "</div>" +
