@@ -243,10 +243,8 @@ input,textarea{-webkit-user-select:text;user-select:text}
 .shift-derived .val{font-weight:800;color:var(--text)}
 .shift-derived .val.err{color:var(--err)}
 .shift-derived .val.ok{color:var(--ok)}
+/* [UG-WEB-07][iter7] .shift-check оставлен только как контейнер — .mark.ok/.err удалены. */
 .shift-check{display:inline-flex;align-items:center;gap:5px}
-.shift-check .mark{font-weight:900;font-size:15px;line-height:1}
-.shift-check .mark.ok{color:var(--ok)}
-.shift-check .mark.err{color:var(--err)}
 .shift-summary{padding:10px 0;font-size:13px;line-height:1.5;color:var(--text-2)}
 .shift-summary .sum-line{display:flex;justify-content:space-between;gap:8px;padding:3px 0}
 .shift-summary .sum-line .k{color:var(--text-3)}
@@ -257,10 +255,7 @@ input,textarea{-webkit-user-select:text;user-select:text}
 .shift-list-item:active{transform:scale(0.995)}
 .shift-list-item .sli-date{font-weight:700;font-size:14px;flex:1;min-width:0}
 .shift-list-item .sli-sum{font-weight:800;font-variant-numeric:tabular-nums;font-size:14px}
-.shift-list-item .sli-mark{font-weight:900;font-size:15px;line-height:1}
-.shift-list-item .sli-mark.ok{color:var(--ok)}
-.shift-list-item .sli-mark.err{color:var(--err)}
-.shift-list-item .sli-mark.muted{color:var(--text-3)}
+/* [UG-WEB-07][iter7] Удалены неиспользуемые .sli-mark.ok / .sli-mark.err / .sli-mark.muted. */
 .shift-empty-list{text-align:center;padding:24px 16px;color:var(--text-3);font-size:13px}
 
 @media (min-width:720px){.storage-warn{left:auto;right:20px;bottom:20px;max-width:360px}}
@@ -295,7 +290,7 @@ input,textarea{-webkit-user-select:text;user-select:text}
 .btn-tg[data-state="error"]{background:rgba(224,92,92,0.13);color:var(--err);border-color:rgba(224,92,92,0.2)}
 .btn-tg:disabled{opacity:.5;cursor:not-allowed}
 
-/* [UG-WEB-06][iter3] Индикатор сходимости — цветной кружок.
+/* [UG-WEB-06][iter7] Индикатор сходимости — цветной кружок.
    Использует существующие переменные --ok / --err. */
 .mark-dot{display:inline-block;width:10px;height:10px;border-radius:50%;vertical-align:middle;flex-shrink:0}
 .mark-dot.ok{background:var(--ok);box-shadow:0 0 6px rgba(91,196,110,0.55)}
