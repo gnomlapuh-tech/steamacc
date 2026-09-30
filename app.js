@@ -35,6 +35,7 @@ function lsSetJson(key, val){ return lsSet(key, JSON.stringify(val)); }
 
 var accounts = [];
 var categories = [];
+var shifts = [];
 var accountIndex = Object.create(null);
 var actionLog = [];
 var refreshTimer = null;
@@ -43,6 +44,7 @@ var currentCategoryFilter = "all";
 var currentSort = "status";
 var currentView = lsGet("view") || "table";
 var currentSearch = "";
+var currentRoute = "accounts";
 var lastTapTime = 0;
 var revealedPasswords = {};
 var searchDebounce = null;
@@ -243,6 +245,30 @@ function normalizeAccount(a){
   };
 }
 
+function normalizeShiftPart(p){
+  if(!p) return null;
+  return {
+    revenue: Number(p.revenue) || 0,
+    terminal: Number(p.terminal) || 0,
+    cash: Number(p.cash) || 0,
+    sbp: (p.sbp === null || p.sbp === undefined || p.sbp === "") ? 0 : (Number(p.sbp) || 0),
+    saved_at: (p.saved_at === null || p.saved_at === undefined || p.saved_at === "") ? new Date().toISOString() : String(p.saved_at)
+  };
+}
+
+function normalizeShift(s){
+  if(!s || typeof s !== "object") return null;
+  var date = String(s.date || "").slice(0, 10);
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+  return {
+    id: Math.max(0, Math.floor(Number(s.id) || 0)),
+    date: date,
+    created_at: (s.created_at === null || s.created_at === undefined || s.created_at === "") ? new Date().toISOString() : String(s.created_at),
+    day: normalizeShiftPart(s.day),
+    night: normalizeShiftPart(s.night)
+  };
+}
+
 function rebuildAccountIndex(){
   accountIndex = Object.create(null);
   for(var i=0;i<accounts.length;i++){ accountIndex[String(accounts[i].id)] = accounts[i]; }
@@ -279,6 +305,13 @@ function loadCategories(){
   for(var i=0;i<raw.length;i++){ var n = normalizeCategory(raw[i]); if(n && n.name) categories.push(n); }
 }
 
+function loadShifts(){
+  var raw = lsGetJson("shifts", []);
+  shifts = [];
+  for(var i=0;i<raw.length;i++){ var n = normalizeShift(raw[i]); if(n) shifts.push(n); }
+  shifts.sort(function(a,b){ return b.date.localeCompare(a.date); });
+}
+
 function loadActionLog(){
   actionLog = lsGetJson("actionLog", []);
   if(!Array.isArray(actionLog)) actionLog = [];
@@ -298,6 +331,10 @@ function persist(){
 }
 function persistCategories(){
   var ok = lsSetJson("categories", categories);
+  if(ok) bumpRev();
+}
+function persistShifts(){
+  var ok = lsSetJson("shifts", shifts);
   if(ok) bumpRev();
 }
 function saveActionLog(){
@@ -368,10 +405,10 @@ function scheduleExpireCheck(){
 function startRefreshLoop(){ if(refreshTimer || !isAppVisible) return; refreshTimer = setInterval(tick, 30000); }
 function stopRefreshLoop(){ if(refreshTimer){ clearInterval(refreshTimer); refreshTimer = null; } }
 function stopCountdown(){ if(window._cdTimer){ clearInterval(window._cdTimer); window._cdTimer = null; } }
-function refreshNow(){ loadAccounts(); renderList(); scheduleExpireCheck(); }
+function refreshNow(){ loadAccounts(); renderRoute(); scheduleExpireCheck(); }
 
 /* ============================================================
- * App shell
+ * App shell + роутинг
  * ============================================================ */
 
 function buildApp(){
@@ -382,12 +419,70 @@ function buildApp(){
       "<div class=\"h-brand\">" + logoHTML() +
         "<div class=\"h-text\"><div class=\"h-name\">United Gamers</div><div class=\"h-sub\">SteamAcc · Admin</div></div>" +
       "</div>" +
-      "<button class=\"btn btn-primary desk-only\" onclick=\"openEdit(null)\">+ Добавить</button>" +
       "<button class=\"icon-btn\" onclick=\"openHotkeysModal()\" title=\"Горячие клавиши (Shift+/)\">" + ICO.help + "</button>" +
-      "<button class=\"icon-btn\" onclick=\"openHistory()\" title=\"История (h)\">" + ICO.history + "</button>" +
-      "<button class=\"icon-btn\" onclick=\"openMenu()\" title=\"Настройки (s)\">" + ICO.settings + "</button>" +
     "</div>" +
     "<div class=\"sub\">Управление Steam-аккаунтами клуба</div>" +
+    "<div class=\"tabs-bar\">" +
+      "<button class=\"tabs-bar-btn\" data-route=\"accounts\" onclick=\"switchRoute('accounts')\">Аккаунты</button>" +
+      "<button class=\"tabs-bar-btn\" data-route=\"cash\" onclick=\"switchRoute('cash')\">Касса</button>" +
+      "<button class=\"tabs-bar-btn\" data-route=\"history\" onclick=\"switchRoute('history')\">История</button>" +
+      "<button class=\"tabs-bar-btn\" data-route=\"settings\" onclick=\"switchRoute('settings')\">Настройки</button>" +
+    "</div>" +
+    "<div id=\"pageZone\"></div>";
+  _appBuilt = true;
+  bindHoverTracking();
+  renderRoute();
+}
+
+function applyRouteHighlight(){
+  var tabs = document.querySelectorAll(".tabs-bar-btn");
+  for(var i=0;i<tabs.length;i++){
+    var t = tabs[i];
+    if(t.getAttribute("data-route") === currentRoute) t.classList.add("active");
+    else t.classList.remove("active");
+  }
+}
+
+function renderRoute(){
+  if(!_appBuilt){ buildApp(); return; }
+  var host = document.getElementById("pageZone");
+  if(!host) return;
+  if(currentRoute === "accounts") host.innerHTML = renderAccountsPage();
+  else if(currentRoute === "cash") host.innerHTML = renderCashPage();
+  else if(currentRoute === "history") host.innerHTML = renderHistoryPage();
+  else if(currentRoute === "settings") host.innerHTML = renderSettingsPage();
+  else host.innerHTML = renderAccountsPage();
+  applyRouteHighlight();
+  applyChromeVisibility();
+  if(currentRoute === "accounts") renderList();
+  if(currentRoute === "history") renderHistoryList();
+  if(currentRoute === "cash") bindCashPage();
+}
+
+function applyChromeVisibility(){
+  var fab = document.getElementById("fabAdd");
+  if(fab) fab.style.display = currentRoute === "accounts" ? "" : "none";
+}
+
+function switchRoute(r){
+  if(r !== "accounts" && r !== "cash" && r !== "history" && r !== "settings") r = "accounts";
+  currentRoute = r;
+  try{
+    var ui = lsGetJson("ui", {});
+    ui.route = r;
+    lsSetJson("ui", ui);
+  }catch(e){}
+  try{ history.replaceState(null, "", "#" + r); }catch(e){}
+  vib("tick");
+  renderRoute();
+}
+
+/* ============================================================
+ * Страница: Аккаунты
+ * ============================================================ */
+
+function renderAccountsPage(){
+  return "" +
     "<div class=\"stats\">" +
       "<div class=\"stat free\" data-stat=\"free\" onclick=\"setFilter('free')\"><div class=\"num\">0</div><div class=\"lbl\">Свободно</div></div>" +
       "<div class=\"stat cool\" data-stat=\"cool\" onclick=\"setFilter('cool')\"><div class=\"num\">0</div><div class=\"lbl\">Кулдаун</div></div>" +
@@ -396,18 +491,12 @@ function buildApp(){
     "</div>" +
     "<div id=\"categoryZone\"></div>" +
     "<div id=\"searchZone\"></div>" +
-    "<div id=\"listZone\"></div>" +
-    "<div class=\"hints-bar\" id=\"hintsBar\"></div>";
-  _appBuilt = true;
-  buildSearchZone();
-  buildCategoryZone();
-  renderHintsBar();
-  applyFilterHighlight();
-  /* [UG-WEB-02][iter2][R] Один вызов bindHoverTracking в buildApp.
-     #listZone создаётся здесь и живёт до перезагрузки; renderList меняет только
-     его innerHTML, сам контейнер не пересоздаётся — делегирование продолжает работать. */
-  bindHoverTracking();
+    "<div id=\"listZone\"></div>";
 }
+
+/* ============================================================
+ * renderList
+ * ============================================================ */
 
 function buildSearchZone(){
   var host = document.getElementById("searchZone");
@@ -449,34 +538,6 @@ function buildCategoryZone(){
   host.innerHTML = html;
 }
 
-function renderHintsBar(){
-  var host = document.getElementById("hintsBar");
-  if(!host) return;
-  var ui = lsGetJson("ui", {});
-  var enabled = ui.hintsBar === undefined ? true : !!ui.hintsBar;
-  if(!enabled){ host.innerHTML = ""; return; }
-  host.innerHTML =
-    "<div class=\"hints-hint\" onclick=\"openHotkeysModal()\" style=\"cursor:pointer\">" +
-      "<span><span class=\"kbd\">n</span> новый</span>" +
-      "<span style=\"opacity:.4\">·</span>" +
-      "<span><span class=\"kbd\">/</span> поиск</span>" +
-      "<span style=\"opacity:.4\">·</span>" +
-      "<span><span class=\"kbd\">h</span> история</span>" +
-      "<span style=\"opacity:.4\">·</span>" +
-      "<span><span class=\"kbd\">?</span> справка</span>" +
-    "</div>" +
-    "<button class=\"hints-bar-close\" onclick=\"event.stopPropagation();closeHintsBar()\" title=\"Скрыть\">×</button>";
-  host.setAttribute("onclick", "openHotkeysModal()");
-}
-
-function closeHintsBar(){
-  var ui = lsGetJson("ui", {});
-  ui.hintsBar = false;
-  lsSetJson("ui", ui);
-  var host = document.getElementById("hintsBar");
-  if(host){ host.innerHTML = ""; host.removeAttribute("onclick"); }
-}
-
 function applyFilterHighlight(){
   var stats = document.querySelectorAll(".stat");
   for(var i=0;i<stats.length;i++){
@@ -494,10 +555,6 @@ function setCategoryFilter(v){
   vib("tick");
   renderList();
 }
-
-/* ============================================================
- * computeVisible — единая точка фильтрации и сортировки
- * ============================================================ */
 
 function computeVisible(){
   var statusMap = new Map();
@@ -545,12 +602,8 @@ function computeVisible(){
   return visible;
 }
 
-/* ============================================================
- * renderList
- * ============================================================ */
-
 function renderList(){
-  if(!_appBuilt){ buildApp(); }
+  if(currentRoute !== "accounts") return;
   var host = document.getElementById("listZone");
   if(!host) return;
 
@@ -560,7 +613,6 @@ function renderList(){
   else if(accounts.length === 0 && hasInput){ destroySearchZone(); }
 
   buildCategoryZone();
-  renderHintsBar();
   applyFilterHighlight();
 
   var stats = { free:0, cool:0, ban:0, banPerm:0, busy:0 };
@@ -616,12 +668,14 @@ function renderList(){
   updateStatsAndChips();
 }
 
+/* [UG-WEB-03][iter2][A] Упрощённая и корректная проверка hover.
+   closest("[data-id]") уже отсеивает всё лишнее, независимо от классов. */
 function bindHoverTracking(){
-  var host = document.getElementById("listZone");
+  var host = document.getElementById("app");
   if(!host) return;
   host.addEventListener("mouseover", function(e){
     var el = e.target.closest("[data-id]");
-    if(el && host.contains(el)){
+    if(el && el.dataset && el.dataset.id){
       hoveredAccountId = Number(el.dataset.id);
       highlightHovered();
     }
@@ -629,10 +683,7 @@ function bindHoverTracking(){
   host.addEventListener("mouseout", function(e){
     var el = e.target.closest("[data-id]");
     var to = e.relatedTarget && e.relatedTarget.closest ? e.relatedTarget.closest("[data-id]") : null;
-    if(el && el !== to){
-      hoveredAccountId = null;
-      highlightHovered();
-    }
+    if(el && el !== to){ hoveredAccountId = null; highlightHovered(); }
   });
   host.addEventListener("pointerdown", function(e){
     if(e.pointerType === "touch"){ hoveredAccountId = null; highlightHovered(); }
@@ -640,7 +691,7 @@ function bindHoverTracking(){
 }
 
 function highlightHovered(){
-  var list = document.querySelectorAll(".card, .tbl tr[data-id]");
+  var list = document.querySelectorAll(".card[data-id], .tbl tr[data-id]");
   for(var i=0;i<list.length;i++){
     var el = list[i];
     if(hoveredAccountId !== null && Number(el.dataset.id) === hoveredAccountId) el.classList.add("hover-highlight");
@@ -837,525 +888,407 @@ function showStorageWarn(msg){
 }
 
 /* ============================================================
- * Открытие/редактирование аккаунта
+ * Касса
  * ============================================================ */
 
-function openEdit(id){
-  if(tapGuard()) return;
-  vib("click");
-  var a = id != null ? getAccount(id) : null;
-  var isNew = !a; window._editId = a ? a.id : null;
-  var nm = a ? (a.name||"") : ""; var lgn = a ? (a.login||"") : ""; var pwd = a ? (a.password||"") : "";
-  var catId = a ? a.category_id : null;
-  var sortedCats = categories.slice().sort(function(x,y){ return (x.name||"").localeCompare(y.name||"","ru"); });
+function todayISO(){
+  var d = new Date();
+  return d.getFullYear() + "-" + pad(d.getMonth()+1) + "-" + pad(d.getDate());
+}
+
+function fmtDateRu(dateISO){
+  if(!dateISO) return "—";
+  var parts = String(dateISO).split("-");
+  if(parts.length !== 3) return dateISO;
+  return parts[2] + "." + parts[1] + "." + parts[0];
+}
+
+function fmtDateShortRu(dateISO){
+  if(!dateISO) return "—";
+  var parts = String(dateISO).split("-");
+  if(parts.length !== 3) return dateISO;
+  return parts[2] + "." + parts[1];
+}
+
+function computeShiftPart(p){
+  if(!p) return null;
+  var revenue = Number(p.revenue) || 0;
+  var terminal = Number(p.terminal) || 0;
+  var cash = Number(p.cash) || 0;
+  var sbp = Number(p.sbp) || 0;
+  var langame = sbp - terminal;
+  var check_sum = terminal + langame + cash;
+  var check_ok = (revenue === check_sum);
+  return {
+    revenue: revenue,
+    terminal: terminal,
+    cash: cash,
+    sbp: sbp,
+    langame: langame,
+    check_sum: check_sum,
+    check_ok: check_ok,
+    saved_at: p.saved_at || null
+  };
+}
+
+function computeShiftTotal(shift){
+  if(!shift) return null;
+  var day = shift.day ? computeShiftPart(shift.day) : null;
+  var night = shift.night ? computeShiftPart(shift.night) : null;
+  if(!day && !night) return null;
+  var revenue = (day ? day.revenue : 0) + (night ? night.revenue : 0);
+  var terminal = (day ? day.terminal : 0) + (night ? night.terminal : 0);
+  var cash = (day ? day.cash : 0) + (night ? night.cash : 0);
+  var sbp = (day ? day.sbp : 0) + (night ? night.sbp : 0);
+  var langame = sbp - terminal;
+  var check_sum = terminal + langame + cash;
+  var bothFilled = !!(day && night);
+  var check_ok = bothFilled ? (day.check_ok && night.check_ok) : (day ? day.check_ok : (night ? night.check_ok : false));
+  return { revenue: revenue, terminal: terminal, cash: cash, sbp: sbp, langame: langame, check_sum: check_sum, check_ok: check_ok, bothFilled: bothFilled, day: day, night: night };
+}
+
+function findTodayShift(){ return findShiftByDate(todayISO()); }
+function findShiftByDate(dateISO){ return shifts.filter(function(s){ return s.date === dateISO; })[0] || null; }
+
+function formatMoney(n){
+  n = Number(n) || 0;
+  var sign = n < 0 ? "-" : "";
+  n = Math.abs(n);
+  var s = String(Math.floor(n));
+  var parts = s.split("").reverse().join("").replace(/(\d{3})(?=\d)/g, "$1 ").split("").reverse().join("");
+  return sign + parts;
+}
+
+/* [UG-WEB-03][iter2][D] Дата передаётся явным аргументом, глобал убран. */
+function shiftReportText(kind, part, dateISO){
+  var title = kind === "day" ? "Отчёт за день" : "Отчёт за ночь";
+  var dateRu = fmtDateShortRu(dateISO);
+  var lines = [];
+  lines.push(title + " (" + dateRu + "):");
+  lines.push("Выручка — " + formatMoney(part.revenue) + " ₽");
+  lines.push("Терминал — " + formatMoney(part.terminal) + " ₽");
+  lines.push("LanGame — " + formatMoney(part.langame) + " ₽");
+  lines.push("Наличные — " + formatMoney(part.cash) + " ₽");
+  lines.push("Оплата по СБП — " + formatMoney(part.sbp) + " ₽");
+  lines.push("Проверка: " + (part.check_ok ? "✓ сошлось" : "✗ не сходится"));
+  return lines.join("\n");
+}
+
+function shiftTotalReportText(shift){
+  var t = computeShiftTotal(shift);
+  if(!t) return "";
+  var dateRu = fmtDateShortRu(shift.date);
+  var lines = [];
+  lines.push("Отчёт за сутки (" + dateRu + "):");
+  lines.push("Выручка — " + formatMoney(t.revenue) + " ₽");
+  lines.push("Терминал — " + formatMoney(t.terminal) + " ₽");
+  lines.push("LanGame — " + formatMoney(t.langame) + " ₽");
+  lines.push("Наличные — " + formatMoney(t.cash) + " ₽");
+  lines.push("Оплата по СБП — " + formatMoney(t.sbp) + " ₽");
+  var mark = t.check_ok ? "✓ сошлось" : "✗ не сходится";
+  if(!t.bothFilled){ mark += " (не все части заполнены)"; }
+  lines.push("Проверка: " + mark);
+  return lines.join("\n");
+}
+
+function renderShiftPartBlock(shift, partKey){
+  var part = shift ? shift[partKey] : null;
+  var title = partKey === "day" ? "День" : "Ночь";
+  if(part){
+    var c = computeShiftPart(part);
+    var mark = c.check_ok ? "<span class=\"mark ok\">✓</span>" : "<span class=\"mark err\">✗</span>";
+    return "" +
+      "<div class=\"shift-block\">" +
+        "<div class=\"shift-block-head\">" +
+          "<div class=\"shift-block-title\">" + title + " " + mark + " <span class=\"shift-block-badge\">сохранено " + esc(fmtDT(part.saved_at)) + "</span></div>" +
+          "<button class=\"btn btn-sm btn-ghost\" onclick=\"openShiftPartEditor('" + partKey + "')\">Редактировать</button>" +
+        "</div>" +
+        "<div class=\"shift-summary\">" +
+          "<div class=\"sum-line\"><span class=\"k\">Выручка</span><span class=\"v\">" + formatMoney(c.revenue) + " ₽</span></div>" +
+          "<div class=\"sum-line\"><span class=\"k\">Терминал</span><span class=\"v\">" + formatMoney(c.terminal) + " ₽</span></div>" +
+          "<div class=\"sum-line\"><span class=\"k\">LanGame</span><span class=\"v\">" + formatMoney(c.langame) + " ₽</span></div>" +
+          "<div class=\"sum-line\"><span class=\"k\">Наличные</span><span class=\"v\">" + formatMoney(c.cash) + " ₽</span></div>" +
+          "<div class=\"sum-line\"><span class=\"k\">Оплата по СБП</span><span class=\"v\">" + formatMoney(c.sbp) + " ₽</span></div>" +
+          "<div class=\"sum-line\"><span class=\"k\">Проверка</span><span class=\"v\">" + formatMoney(c.check_sum) + " ₽ " + mark + "</span></div>" +
+        "</div>" +
+      "</div>";
+  }
+  return "" +
+    "<div class=\"shift-block\">" +
+      "<div class=\"shift-block-head\">" +
+        "<div class=\"shift-block-title\">" + title + "</div>" +
+      "</div>" +
+      "<div class=\"shift-grid\">" +
+        "<div class=\"shift-field\"><label>Выручка *</label><input id=\"cash_" + partKey + "_revenue\" type=\"number\" inputmode=\"decimal\" oninput=\"updateCashDerived('" + partKey + "')\"></div>" +
+        "<div class=\"shift-field\"><label>Терминал *</label><input id=\"cash_" + partKey + "_terminal\" type=\"number\" inputmode=\"decimal\" oninput=\"updateCashDerived('" + partKey + "')\"></div>" +
+        "<div class=\"shift-field\"><label>Наличные *</label><input id=\"cash_" + partKey + "_cash\" type=\"number\" inputmode=\"decimal\" oninput=\"updateCashDerived('" + partKey + "')\"></div>" +
+        "<div class=\"shift-field\"><label>Оплата по СБП</label><input id=\"cash_" + partKey + "_sbp\" type=\"number\" inputmode=\"decimal\" oninput=\"updateCashDerived('" + partKey + "')\"></div>" +
+      "</div>" +
+      "<div style=\"margin-top:10px\" id=\"cash_derived_" + partKey + "\"></div>" +
+      "<div class=\"modal-actions\" style=\"margin-top:14px\">" +
+        "<button class=\"btn btn-primary\" onclick=\"saveCashPart('" + partKey + "')\">Сохранить " + (partKey === "day" ? "день" : "ночь") + "</button>" +
+      "</div>" +
+    "</div>";
+}
+
+function updateCashDerived(partKey){
+  var rev = Number((document.getElementById("cash_" + partKey + "_revenue") || {}).value) || 0;
+  var term = Number((document.getElementById("cash_" + partKey + "_terminal") || {}).value) || 0;
+  var cash = Number((document.getElementById("cash_" + partKey + "_cash") || {}).value) || 0;
+  var sbp = Number((document.getElementById("cash_" + partKey + "_sbp") || {}).value) || 0;
+  var langame = sbp - term;
+  var check_sum = term + langame + cash;
+  var ok = (rev === check_sum);
+  var mark = ok ? "<span class=\"mark ok\">✓</span>" : "<span class=\"mark err\">✗</span>";
+  var host = document.getElementById("cash_derived_" + partKey);
+  if(!host) return;
+  host.innerHTML =
+    "<div class=\"shift-derived\"><span class=\"lbl\">LanGame</span><span class=\"val\">" + formatMoney(langame) + " ₽</span></div>" +
+    "<div class=\"shift-derived\" style=\"margin-top:6px\"><span class=\"lbl\">Проверка (Терминал + LanGame + Наличные)</span><span class=\"val " + (ok ? "ok" : "err") + "\">" + formatMoney(check_sum) + " ₽ <span class=\"shift-check\">" + mark + "</span></span></div>";
+}
+
+function renderCashPage(){
+  var today = todayISO();
+  var shift = findTodayShift();
+  var html = "";
+  html += "<div class=\"cash-title\">Касса</div>";
+  html += "<div class=\"cash-date\">Сегодня: " + fmtDateRu(today) + "</div>";
+
+  html += renderShiftPartBlock(shift, "day");
+  html += renderShiftPartBlock(shift, "night");
+
+  if(shift && shift.day && shift.night){
+    var reportText = shiftTotalReportText(shift);
+    var t = computeShiftTotal(shift);
+    var mark = t && t.check_ok ? "<span class=\"mark ok\">✓</span>" : "<span class=\"mark err\">✗</span>";
+    html += "<div class=\"shift-block\">" +
+      "<div class=\"shift-block-head\">" +
+        "<div class=\"shift-block-title\">Итог за сутки " + mark + "</div>" +
+      "</div>" +
+      "<div class=\"shift-report\">" + esc(reportText) + "</div>" +
+      "<div class=\"modal-actions\" style=\"margin-top:12px\">" +
+        "<button class=\"btn btn-ghost\" onclick=\"copyShiftReport('total')\">Скопировать отчёт</button>" +
+      "</div>" +
+    "</div>";
+  } else if(shift && (shift.day || shift.night)){
+    var reportText2 = shift.day
+      ? shiftReportText("day", computeShiftPart(shift.day), shift.date)
+      : shiftReportText("night", computeShiftPart(shift.night), shift.date);
+    html += "<div class=\"shift-block\">" +
+      "<div class=\"shift-block-head\">" +
+        "<div class=\"shift-block-title\">Отчёт</div>" +
+      "</div>" +
+      "<div class=\"shift-report\">" + esc(reportText2) + "</div>" +
+      "<div class=\"modal-actions\" style=\"margin-top:12px\">" +
+        "<button class=\"btn btn-ghost\" onclick=\"copyShiftReport('single')\">Скопировать отчёт</button>" +
+      "</div>" +
+    "</div>";
+  }
+
+  html += "<div class=\"shift-block\">" +
+    "<div class=\"shift-block-head\">" +
+      "<div class=\"shift-block-title\">История смен</div>" +
+    "</div>" +
+    renderShiftHistory() +
+  "</div>";
+
+  return html;
+}
+
+function bindCashPage(){
+  updateCashDerived("day");
+  updateCashDerived("night");
+}
+
+function saveCashPart(partKey){
+  var revEl = document.getElementById("cash_" + partKey + "_revenue");
+  var termEl = document.getElementById("cash_" + partKey + "_terminal");
+  var cashEl = document.getElementById("cash_" + partKey + "_cash");
+  var sbpEl = document.getElementById("cash_" + partKey + "_sbp");
+  if(!revEl || !termEl || !cashEl) return;
+  var rev = String(revEl.value).trim();
+  var term = String(termEl.value).trim();
+  var cash = String(cashEl.value).trim();
+  var sbpRaw = sbpEl ? String(sbpEl.value).trim() : "";
+  if(!rev){ toast("Заполните: Выручка", "err"); revEl.focus(); return; }
+  if(!term){ toast("Заполните: Терминал", "err"); termEl.focus(); return; }
+  if(!cash){ toast("Заполните: Наличные", "err"); cashEl.focus(); return; }
+  var part = {
+    revenue: Number(rev) || 0,
+    terminal: Number(term) || 0,
+    cash: Number(cash) || 0,
+    sbp: sbpRaw === "" ? 0 : (Number(sbpRaw) || 0),
+    saved_at: new Date().toISOString()
+  };
+  var today = todayISO();
+  var shift = findTodayShift();
+  if(!shift){
+    var nid = 0; shifts.forEach(function(s){ if(s.id >= nid) nid = s.id+1; });
+    if(nid === 0) nid = 1;
+    shift = { id: nid, date: today, created_at: new Date().toISOString(), day: null, night: null };
+    shifts.push(shift);
+  }
+  shift[partKey] = part;
+  persistShifts();
+  addLog((partKey === "day" ? "Касса: день сохранён " : "Касса: ночь сохранена ") + fmtDateRu(today) + " (" + formatMoney(part.revenue) + " ₽)", "info");
+  toast(partKey === "day" ? "День сохранён" : "Ночь сохранена", "ok");
+  renderRoute();
+}
+
+/* [UG-WEB-03][iter2][E] Единый редактор части смены — для текущей и для прошлой. */
+function openShiftPartEditor(partKey, dateISO){
+  dateISO = dateISO || todayISO();
+  var shift = findShiftByDate(dateISO);
+  if(!shift || !shift[partKey]) return;
+  var p = computeShiftPart(shift[partKey]);
+  var title = (partKey === "day" ? "Редактировать день" : "Редактировать ночь") + " · " + fmtDateRu(dateISO);
   var html = "<div class=\"modal-bg\" onclick=\"if(event.target===this)closeModal()\"><div class=\"modal\" onclick=\"event.stopPropagation()\">";
-  html += "<h2>" + icoWrap(ICO.edit) + (isNew ? "Новый аккаунт" : "Редактировать") + "</h2>";
-  html += "<div class=\"field\"><label>Имя аккаунта *</label><input id=\"f_name\" type=\"text\" value=\"" + esc(nm) + "\" placeholder=\"club_01\" autocomplete=\"off\"></div>";
-  html += "<div class=\"field\"><label>Логин Steam</label><input id=\"f_login\" type=\"text\" value=\"" + esc(lgn) + "\" placeholder=\"login_name\" autocomplete=\"off\"></div>";
-  html += "<div class=\"field\"><label>Пароль</label><div class=\"pass-wrap\"><input id=\"f_pass\" type=\"password\" value=\"" + esc(pwd) + "\" placeholder=\"пароль\" autocomplete=\"off\"><button class=\"eye\" onclick=\"togglePass()\">👁</button></div></div>";
-  html += "<div class=\"field\"><label>Категория</label><select id=\"f_category\" class=\"sort-select\">";
-  html += "<option value=\"\"" + (catId == null ? " selected" : "") + ">— без категории —</option>";
-  sortedCats.forEach(function(c){
-    html += "<option value=\"" + c.id + "\"" + (String(catId) === String(c.id) ? " selected" : "") + ">" + esc(c.name) + "</option>";
+  html += "<h2>" + icoWrap(ICO.edit) + esc(title) + "</h2>";
+  html += "<div class=\"shift-grid\">";
+  html += "<div class=\"shift-field\"><label>Выручка *</label><input id=\"edit_part_revenue\" type=\"number\" value=\"" + p.revenue + "\"></div>";
+  html += "<div class=\"shift-field\"><label>Терминал *</label><input id=\"edit_part_terminal\" type=\"number\" value=\"" + p.terminal + "\"></div>";
+  html += "<div class=\"shift-field\"><label>Наличные *</label><input id=\"edit_part_cash\" type=\"number\" value=\"" + p.cash + "\"></div>";
+  html += "<div class=\"shift-field\"><label>Оплата по СБП</label><input id=\"edit_part_sbp\" type=\"number\" value=\"" + p.sbp + "\"></div>";
+  html += "</div>";
+  html += "<div class=\"modal-actions\"><button class=\"btn btn-ghost\" onclick=\"closeModal()\">Отмена</button>";
+  html += "<button class=\"btn btn-primary\" onclick=\"saveShiftPart('" + partKey + "','" + dateISO + "')\">Сохранить</button></div>";
+  html += "</div></div>";
+  document.getElementById("modals").innerHTML = html;
+}
+
+function saveShiftPart(partKey, dateISO){
+  dateISO = dateISO || todayISO();
+  var revEl = document.getElementById("edit_part_revenue");
+  var termEl = document.getElementById("edit_part_terminal");
+  var cashEl = document.getElementById("edit_part_cash");
+  var sbpEl = document.getElementById("edit_part_sbp");
+  if(!revEl || !termEl || !cashEl) return;
+  var rev = String(revEl.value).trim();
+  var term = String(termEl.value).trim();
+  var cash = String(cashEl.value).trim();
+  var sbpRaw = sbpEl ? String(sbpEl.value).trim() : "";
+  if(!rev || !term || !cash){ toast("Заполните обязательные поля", "err"); return; }
+  var shift = findShiftByDate(dateISO);
+  if(!shift){ toast("Смена не найдена", "err"); return; }
+  shift[partKey] = {
+    revenue: Number(rev) || 0,
+    terminal: Number(term) || 0,
+    cash: Number(cash) || 0,
+    sbp: sbpRaw === "" ? 0 : (Number(sbpRaw) || 0),
+    saved_at: new Date().toISOString()
+  };
+  persistShifts();
+  addLog("Касса: " + (partKey === "day" ? "день" : "ночь") + " обновлена за " + fmtDateRu(dateISO), "info");
+  closeModal();
+  toast("Сохранено", "ok");
+  renderRoute();
+}
+
+function copyShiftReport(kind){
+  var today = todayISO();
+  var shift = findTodayShift();
+  if(!shift){ toast("Нет данных", "err"); return; }
+  var text = "";
+  if(kind === "total" || (shift.day && shift.night)){
+    text = shiftTotalReportText(shift);
+  } else if(shift.day){
+    text = shiftReportText("day", computeShiftPart(shift.day), shift.date);
+  } else if(shift.night){
+    text = shiftReportText("night", computeShiftPart(shift.night), shift.date);
+  }
+  if(!text){ toast("Нет данных", "err"); return; }
+  if(copyToClipboard(text)){ toast("Отчёт скопирован", "ok"); vib("click"); }
+  else toast("Не удалось скопировать", "err");
+}
+
+/* ============================================================
+ * История смен
+ * ============================================================ */
+
+function renderShiftHistory(){
+  if(!shifts.length) return "<div class=\"shift-empty-list\">Пока нет смен</div>";
+  var html = "<div class=\"shift-list\">";
+  shifts.forEach(function(s){
+    var t = computeShiftTotal(s);
+    var revText = t ? (formatMoney(t.revenue) + " ₽") : "—";
+    var mark = "";
+    if(!t){ mark = "<span class=\"sli-mark muted\">·</span>"; }
+    else if(!t.bothFilled){ mark = "<span class=\"sli-mark muted\">·</span>"; }
+    else if(t.check_ok){ mark = "<span class=\"sli-mark ok\">✓</span>"; }
+    else { mark = "<span class=\"sli-mark err\">✗</span>"; }
+    var suffix = (t && !t.bothFilled) ? " <span style=\"color:var(--text-3);font-size:11px\">(не все части заполнены)</span>" : "";
+    html += "<div class=\"shift-list-item\" onclick=\"openShiftDetail('" + s.date + "')\">" +
+      "<div class=\"sli-date\">" + esc(fmtDateRu(s.date)) + suffix + "</div>" +
+      "<div class=\"sli-sum\">" + esc(revText) + "</div>" +
+      mark +
+    "</div>";
   });
-  html += "</select><button class=\"btn btn-ghost\" style=\"margin-top:8px\" onclick=\"openCategoryManager()\">" + icoWrap(ICO.folder) + " Управление категориями</button></div>";
-  html += "<div class=\"modal-actions\"><button class=\"btn btn-ghost\" onclick=\"closeModal()\">Отмена</button>";
-  html += "<button class=\"btn btn-primary\" onclick=\"saveAccount(" + (isNew?"null":id) + ")\">" + icoWrap(ICO.check) + " Сохранить</button></div>";
-  if(!isNew){ html += "<div class=\"modal-actions\" style=\"margin-top:10px\"><button class=\"btn btn-danger\" onclick=\"confirmDelete(" + id + ")\">" + icoWrap(ICO.trash) + " Удалить</button></div>"; }
-  html += "</div></div>";
-  document.getElementById("modals").innerHTML = html;
+  html += "</div>";
+  return html;
 }
 
-function togglePass(){ var el = document.getElementById("f_pass"); if(!el) return; el.type = el.type === "password" ? "text" : "password"; vib("tick"); }
-
-function saveAccount(id){
-  var nameEl = document.getElementById("f_name");
-  var loginEl = document.getElementById("f_login");
-  var passEl = document.getElementById("f_pass");
-  var catEl = document.getElementById("f_category");
-  if(!nameEl || !loginEl || !passEl){ toast("Форма недоступна", "err"); return; }
-  var nm = nameEl.value.trim();
-  var lgn = loginEl.value.trim();
-  var pwd = passEl.value;
-  var catVal = catEl ? catEl.value : "";
-  var catId = (catVal === "" ? null : Number(catVal));
-  if(catId !== null && (isNaN(catId) || catId <= 0)) catId = null;
-  if(!nm){ toast("Введите имя аккаунта", "err"); return; }
-  var catKey = (catId === null ? "null" : String(catId));
-  var dup = accounts.filter(function(x){
-    return lgn
-      && x.id !== id
-      && x.login.toLowerCase() === lgn.toLowerCase()
-      && String(x.category_id === null ? "null" : x.category_id) === catKey;
-  })[0];
-  if(dup){ toast("Логин уже занят в этой категории: " + dup.name, "err"); return; }
-  var editingId = (id == null) ? null : Number(id);
-  if(id == null){
-    var newId = 0; accounts.forEach(function(x){ if(x.id >= newId) newId = x.id+1; });
-    if(newId === 0) newId = 1;
-    accounts.push(normalizeAccount({ id:newId, name:nm, login:lgn, password:pwd, category_id:catId, created_at:new Date().toISOString() }));
-    addLog("Создан: " + nm, "ok");
-  } else {
-    for(var i=0;i<accounts.length;i++){
-      if(accounts[i].id === id){
-        accounts[i].name = nm;
-        accounts[i].login = lgn;
-        accounts[i].password = pwd;
-        accounts[i].category_id = catId;
-        break;
-      }
-    }
-    addLog("Изменён: " + nm, "info", editingId);
-  }
-  persist();
-  rebuildAccountIndex();
-  closeModal(); renderList(); vib("click");
-  toast(id == null ? "Аккаунт добавлен" : "Изменения сохранены", "ok");
-}
-
-function confirmDelete(id){
-  var a = getAccount(id); if(!a) return;
-  var html = "<div class=\"modal-bg\"><div class=\"alert-modal\" style=\"max-width:400px\">";
-  html += "<div class=\"icon\">" + icoWrap(ICO.trash) + "</div><h2>Удалить аккаунт?</h2>";
-  html += "<div class=\"info\"><div class=\"info-row\"><span class=\"lbl\">Аккаунт</span><span class=\"val\">" + esc(a.name||"") + "</span></div></div>";
-  html += "<div class=\"modal-actions\"><button class=\"btn btn-ghost\" onclick=\"closeModal()\">Отмена</button>";
-  html += "<button class=\"btn btn-danger\" onclick=\"deleteAccount(" + id + ")\">Удалить</button></div></div></div>";
-  document.getElementById("modals").innerHTML = html;
-}
-
-function deleteAccount(id){
-  if(tapGuard()) return;
-  var nm = ""; accounts.forEach(function(x){ if(x.id === id) nm = x.name; });
-  var targetId = Number(id);
-  accounts = accounts.filter(function(x){ return x.id !== id; });
-  delete revealedPasswords[id];
-  addLog("Удалён: " + nm, "danger", targetId);
-  persist();
-  rebuildAccountIndex();
-  closeModal();
-  renderList(); vib("heavy");
-  toast("Аккаунт удалён", "ok");
-}
-
-/* ============================================================
- * Копирование
- * ============================================================ */
-
-function copyText(value, btnId, label){
-  if(!value){ toast("Значение пустое", "err"); return false; }
-  var ok = copyToClipboard(value);
-  if(!ok){ toast("Не удалось скопировать", "err"); return false; }
-  vib("click");
-  toast(label + " · очистка через 30с", "ok");
-  var btn = btnId ? document.getElementById(btnId) : null;
-  if(btn){
-    if(!btn.dataset.orig) btn.dataset.orig = btn.innerHTML;
-    btn.classList.add("done");
-    btn.innerHTML = icoWrap(ICO.check) + " Скопировано";
-    setTimeout(function(){
-      btn.classList.remove("done");
-      if(btn.dataset.orig) btn.innerHTML = btn.dataset.orig;
-    }, 1500);
-  }
-  if(_clipClearTimer){ clearTimeout(_clipClearTimer); _clipClearTimer = null; }
-  _clipClearTimer = setTimeout(function(){
-    _clipClearTimer = null;
-    try{
-      var p = readClipboard();
-      if(p && typeof p.then === "function"){
-        p.then(function(cur){
-          if(cur === null) return;
-          if(cur === value) copyToClipboard("");
-        }).catch(function(){});
-      }
-    }catch(e){}
-  }, 30000);
-  return true;
-}
-
-function copyIssueField(id, kind, btnId){
-  var a = getAccount(id); if(!a) return;
-  var value = kind === "login" ? (a.login||"") : (a.password||"");
-  var label = kind === "login" ? "Логин скопирован" : "Пароль скопирован";
-  if(copyText(value, btnId, label)) window._issueCopied = id;
-}
-function toggleReveal(id){ revealedPasswords[id] = !revealedPasswords[id]; vib("tick"); maskUpdate(id); }
-function maskUpdate(id){
-  var a = getAccount(id), v = document.getElementById("issue-pass"), b = document.getElementById("issue-reveal");
-  if(!a || !v) return;
-  var r = !!revealedPasswords[id];
-  v.textContent = r ? (a.password || "—") : (a.password ? "••••••••" : "—");
-  v.className = r ? "issue-value" : "issue-value masked";
-  if(b) b.textContent = r ? "🙈 Скрыть" : "👁 Показать";
-}
-
-/* ============================================================
- * Блокировки
- * ============================================================ */
-
-function openBlock(id){
-  if(tapGuard()) return;
-  var a = getAccount(id); if(!a) return;
-  var activeType = (Number(a.ban_permanent) === 1 || a.ban_ts) ? "ban" : "cool";
+function openShiftDetail(dateISO){
+  var shift = findShiftByDate(dateISO);
+  if(!shift) return;
   var html = "<div class=\"modal-bg\" onclick=\"if(event.target===this)closeModal()\"><div class=\"modal\" onclick=\"event.stopPropagation()\">";
-  html += "<h2>" + icoWrap(ICO.lock) + "Блокировка</h2>";
-  html += "<div class=\"type-tabs\">";
-  html += "<button class=\"type-tab" + (activeType === "ban" ? " active" : "") + "\" data-t=\"ban\" onclick=\"switchType('ban')\">" + icoWrap(ICO.ban) + " Бан</button>";
-  html += "<button class=\"type-tab" + (activeType === "cool" ? " active" : "") + "\" data-t=\"cool\" onclick=\"switchType('cool')\">" + icoWrap(ICO.clock) + " Кулдаун</button>";
-  html += "</div>";
-  html += "<div id=\"quickBan\" style=\"display:" + (activeType === "ban" ? "block" : "none") + "\">";
-  html += "<div class=\"field\"><label>Быстрый выбор</label><div class=\"quick-grid\">";
-  html += "<button class=\"quick-btn\" onclick=\"setQuick(" + id + ",'ban',1440)\">1 день</button>";
-  html += "<button class=\"quick-btn\" onclick=\"setQuick(" + id + ",'ban',4320)\">3 дня</button>";
-  html += "<button class=\"quick-btn\" onclick=\"setQuick(" + id + ",'ban',10080)\">7 дней</button>";
-  html += "<button class=\"quick-btn\" onclick=\"setQuick(" + id + ",'ban',43200)\">30 дней</button>";
-  html += "<button class=\"quick-btn wide\" onclick=\"setPermanent(" + id + ")\">" + icoWrap(ICO.ban) + " Навсегда</button>";
-  html += "</div></div></div>";
-  html += "<div id=\"quickCool\" style=\"display:" + (activeType === "cool" ? "block" : "none") + "\">";
-  html += "<div class=\"field\"><label>Быстрый выбор (CS2)</label><div class=\"quick-grid\">";
-  html += "<button class=\"quick-btn\" onclick=\"setQuick(" + id + ",'cool',30)\">30 мин</button>";
-  html += "<button class=\"quick-btn\" onclick=\"setQuick(" + id + ",'cool',120)\">2 часа</button>";
-  html += "<button class=\"quick-btn\" onclick=\"setQuick(" + id + ",'cool',1440)\">24 часа</button>";
-  html += "<button class=\"quick-btn\" onclick=\"setQuick(" + id + ",'cool',10080)\">7 дней</button>";
-  html += "</div></div></div>";
-  html += "<div class=\"field\"><label>Точное время окончания</label><input id=\"b_dt\" type=\"datetime-local\" value=\"" + defaultDateTimeLocal() + "\"></div>";
-  html += "<div class=\"field\"><label>Причина</label><textarea id=\"b_reason\" placeholder=\"Например: VAC, CS2 cooldown\"></textarea></div>";
-  html += "<div class=\"modal-actions\"><button class=\"btn btn-ghost\" onclick=\"closeModal()\">Отмена</button>";
-  html += "<button class=\"btn btn-warn\" onclick=\"saveBlockFromInput(" + id + ")\">" + icoWrap(ICO.check) + " Установить</button></div>";
-  if(Number(a.ban_permanent) === 1 || a.ban_ts){ html += "<div class=\"modal-actions\" style=\"margin-top:10px\"><button class=\"btn btn-danger\" onclick=\"clearBlock(" + id + ",'ban')\">" + icoWrap(ICO.unlock) + " Снять бан</button></div>"; }
-  if(a.cool_ts){ html += "<div class=\"modal-actions\" style=\"margin-top:10px\"><button class=\"btn btn-danger\" onclick=\"clearBlock(" + id + ",'cool')\">" + icoWrap(ICO.unlock) + " Снять кулдаун</button></div>"; }
-  html += "</div></div>";
-  document.getElementById("modals").innerHTML = html;
-  window._blockType = activeType;
-}
-function switchType(t){
-  window._blockType = t;
-  var tabs = document.querySelectorAll(".type-tab");
-  for(var i=0;i<tabs.length;i++){ var tab = tabs[i]; if(tab.getAttribute("data-t") === t) tab.classList.add("active"); else tab.classList.remove("active"); }
-  var qb = document.getElementById("quickBan"); var qc = document.getElementById("quickCool");
-  if(qb) qb.style.display = t === "ban" ? "block" : "none";
-  if(qc) qc.style.display = t === "cool" ? "block" : "none";
-  vib("tick");
-}
-function defaultDateTimeLocal(){ var d = new Date(Date.now()+60*60000); return d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate())+"T"+pad(d.getHours())+":"+pad(d.getMinutes()); }
-function setQuick(id, type, minutes){ var iso = new Date(Date.now()+minutes*60000).toISOString(); var el = document.getElementById("b_reason"); var reason = el ? el.value.trim() : ""; applyBlock(id, type, iso, false, reason); }
-function setPermanent(id){ var el = document.getElementById("b_reason"); var reason = el ? el.value.trim() : ""; applyBlock(id, "ban", null, true, reason); }
-function saveBlockFromInput(id){
-  var t = window._blockType || "cool";
-  var v = document.getElementById("b_dt").value;
-  if(!v){ toast("Выберите дату и время", "err"); return; }
-  var d = new Date(v);
-  if(isNaN(d.getTime())){ toast("Некорректная дата", "err"); return; }
-  if(d.getTime() <= Date.now()){ toast("Дата должна быть в будущем", "err"); return; }
-  var reason = document.getElementById("b_reason").value.trim();
-  applyBlock(id, t, d.toISOString(), false, reason);
-}
-function applyBlock(id, type, iso, permanent, reason){
-  id = Number(id);
-  if(!id){ toast("Ошибка: неверный ID", "err"); return; }
-  var target = getAccount(id);
-  if(!target){ toast("Аккаунт не найден", "err"); return; }
-  if(type === "ban" && permanent){
-    target.ban_until = null; target.ban_ts = null; target.ban_permanent = 1; target.ban_reason = reason;
-    target.cooldown_until = null; target.cool_ts = null; target.cooldown_reason = "";
-  } else if(type === "ban"){
-    target.ban_until = iso; target.ban_ts = new Date(iso).getTime(); target.ban_permanent = 0; target.ban_reason = reason;
-    target.cooldown_until = null; target.cool_ts = null; target.cooldown_reason = "";
-  } else {
-    target.cooldown_until = iso; target.cool_ts = new Date(iso).getTime(); target.cooldown_reason = reason;
+  html += "<h2>" + icoWrap(ICO.clock) + "Смена " + esc(fmtDateRu(dateISO)) + "</h2>";
+  if(shift.day){
+    html += "<div class=\"shift-report\">" + esc(shiftReportText("day", computeShiftPart(shift.day), dateISO)) + "</div>";
+    html += "<div class=\"modal-actions\" style=\"margin-top:8px\"><button class=\"btn btn-ghost\" onclick=\"closeModal();openShiftPartEditor('day','" + dateISO + "')\">Редактировать день</button></div>";
   }
-  if(type === "ban"){ target.busy = 0; target.busy_at = null; target.issued_to = ""; }
-  persist();
-  if(type === "ban" && permanent){ addLog("Бан навсегда: " + target.name, "warn", id); toast("Бан навсегда установлен", "ok"); }
-  else if(type === "ban"){ addLog("Бан: " + target.name + " до " + fmtDT(iso), "warn", id); toast("Бан до " + fmtDT(iso), "ok"); }
-  else { addLog("Кулдаун: " + target.name + " до " + fmtDT(iso), "warn", id); toast("Кулдаун до " + fmtDT(iso), "ok"); }
-  closeModal(); renderList(); scheduleExpireCheck(); vib("click");
-}
-function clearBlock(id, type){
-  id = Number(id);
-  var target = getAccount(id);
-  if(!target) return;
-  if(type === "ban"){
-    target.ban_until = null; target.ban_ts = null; target.ban_permanent = 0; target.ban_reason = "";
-    target.busy = 0; target.busy_at = null; target.issued_to = "";
-    addLog("Бан снят: " + target.name, "info", id); toast("Бан снят", "ok");
-  } else {
-    target.cooldown_until = null; target.cool_ts = null; target.cooldown_reason = "";
-    addLog("Кулдаун снят: " + target.name, "info", id); toast("Кулдаун снят", "ok");
+  if(shift.night){
+    html += "<div class=\"shift-report\" style=\"margin-top:10px\">" + esc(shiftReportText("night", computeShiftPart(shift.night), dateISO)) + "</div>";
+    html += "<div class=\"modal-actions\" style=\"margin-top:8px\"><button class=\"btn btn-ghost\" onclick=\"closeModal();openShiftPartEditor('night','" + dateISO + "')\">Редактировать ночь</button></div>";
   }
-  persist();
-  closeModal(); renderList(); scheduleExpireCheck(); vib("click");
-}
-
-/* ============================================================
- * Выдача
- * ============================================================ */
-
-var issueDraft = {};
-
-function tryIssue(id){
-  if(tapGuard()) return;
-  var a = getAccount(id); if(!a) return;
-  vib("heavy"); var s = getStatus(a);
-  if(s === "ban-perm"){ showBlockModal(a, "ban-perm", null); return; }
-  if(s === "ban"){ showBlockModal(a, "ban", a.ban_ts); return; }
-  if(s === "cool"){ showBlockModal(a, "cool", a.cool_ts); return; }
-  if(s === "busy"){ showBusyBlock(a); return; }
-  issueDraft[id] = ""; window._issueCopied = null; window._issueId = id;
-  openIssue(id);
-}
-function isBlocked(a){ var st = getStatus(a); return st === "ban" || st === "ban-perm" || st === "cool"; }
-function openIssue(id){
-  id = Number(id);
-  var a = getAccount(id); if(!a) return;
-  if(isBlocked(a)){ tryIssue(id); return; }
-  var s = getStatus(a);
-  var revealed = !!revealedPasswords[id];
-  var passDisplay = revealed ? (a.password || "—") : (a.password ? "••••••••" : "—");
-  var passClass = revealed ? "issue-value" : "issue-value masked";
-  var statusLbl = "";
-  if(s === "free") statusLbl = "<span class=\"pill p-free\">" + icoWrap(ICO.play) + " Свободен</span>";
-  else if(s === "cool"){ var rc = fmtRemaining(a.cool_ts - Date.now()); statusLbl = "<span class=\"pill p-cool\">" + icoWrap(ICO.clock) + " Кулдаун · " + rc + "</span>"; }
-  var html = "<div class=\"modal-bg\" onclick=\"if(event.target===this)closeIssue(" + id + ")\"><div class=\"modal\" onclick=\"event.stopPropagation()\">";
-  html += "<h2>" + icoWrap(ICO.play) + "Выдать аккаунт</h2>";
-  html += "<div class=\"issue-hero\">";
-  html += avatarHTML(a, "lg");
-  html += "<div class=\"issue-info\"><div class=\"issue-name\">" + esc(a.name||"Без имени") + "</div>";
-  html += "<div class=\"issue-status\">" + statusLbl + "</div></div></div>";
-  html += "<div class=\"issue-section\"><div class=\"issue-label\">Логин Steam</div>";
-  html += "<div class=\"issue-row\"><div class=\"issue-value\">" + esc(a.login || "— не указан —") + "</div>";
-  html += "<button class=\"issue-copy\" id=\"issue-btn-login\" onclick=\"copyIssueField(" + id + ",'login','issue-btn-login')\">" + icoWrap(ICO.copy) + " Копировать</button>";
-  html += "</div></div>";
-  html += "<div class=\"issue-section\"><div class=\"issue-label\">Пароль</div>";
-  html += "<div class=\"issue-row\"><div id=\"issue-pass\" class=\"" + passClass + "\">" + esc(passDisplay) + "</div>";
-  html += "<button id=\"issue-reveal\" class=\"issue-reveal\" onclick=\"toggleReveal(" + id + ")\">" + (revealed ? "🙈 Скрыть" : "👁 Показать") + "</button>";
-  html += "<button class=\"issue-copy\" id=\"issue-btn-pass\" onclick=\"copyIssueField(" + id + ",'pass','issue-btn-pass')\">" + icoWrap(ICO.copy) + " Копировать</button>";
-  html += "</div></div>";
-  html += "<div class=\"issue-hint\">" + icoWrap(ICO.info) + "<div>Скопируйте логин и пароль, затем вставьте в Steam. Буфер обмена очистится через 30 секунд.</div></div>";
-  html += "<div class=\"field\" style=\"margin-top:12px\"><label>Кому выдан (ПК / игрок)</label><input id=\"issue_to\" maxlength=\"40\" value=\"" + esc(issueDraft[id] || "") + "\" oninput=\"issueDraft[" + id + "]=this.value\"></div>";
-  html += "<div class=\"modal-actions\"><button class=\"btn btn-ghost\" onclick=\"closeIssue(" + id + ")\">Закрыть</button>";
-  html += "<button class=\"btn btn-success\" onclick=\"markBusy(" + id + ")\">" + icoWrap(ICO.check) + " Выдать</button></div>";
+  if(shift.day && shift.night){
+    html += "<div class=\"shift-report\" style=\"margin-top:10px\">" + esc(shiftTotalReportText(shift)) + "</div>";
+  }
+  html += "<div class=\"modal-actions\" style=\"margin-top:16px\">" +
+    "<button class=\"btn btn-danger\" onclick=\"deleteShift('" + dateISO + "')\">Удалить смену</button>" +
+    "<button class=\"btn btn-primary\" onclick=\"closeModal()\">Закрыть</button>" +
+  "</div>";
   html += "</div></div>";
   document.getElementById("modals").innerHTML = html;
 }
-function closeIssue(id){
-  var a = getAccount(id);
-  if(window._issueCopied === id && a && Number(a.busy) !== 1){
-    window._issueCopied = null;
-    confirmAction({title:"Данные скопированы", text:"Аккаунт «" + a.name + "» не отмечен занятым. Отметить?", ok:"Отметить занятым", no:"Не отмечать", cb:function(){ markBusy(id); }});
-    return;
-  }
-  delete issueDraft[id];
-  closeModal();
-}
-function markBusy(id){
-  if(tapGuard()) return;
-  id = Number(id);
-  var a = getAccount(id); if(!a) return;
-  var st = getStatus(a);
-  if(st === "busy"){ toast("Уже занят", "err"); return; }
-  if(st === "ban" || st === "ban-perm" || st === "cool"){ toast("Заблокирован", "err"); return; }
-  var to = String(issueDraft[id] || "").trim().slice(0, 40), at = new Date().toISOString();
-  a.busy = 1; a.busy_at = at; a.issued_to = to;
-  addLog("Выдан: " + a.name + (to ? " → " + to : ""), "ok", id);
-  persist();
-  window._issueCopied = null; delete issueDraft[id];
-  closeModal(); renderList(); vib("click");
-  toast("Аккаунт помечен занятым", "ok");
-}
-function releaseAccount(id){
-  if(tapGuard()) return;
-  id = Number(id);
-  var a = getAccount(id); if(!a) return;
-  a.busy = 0; a.busy_at = null; a.issued_to = "";
-  addLog("Освобождён: " + a.name, "info", id);
-  persist();
-  closeModal(); renderList(); vib("click");
-  toast("Аккаунт освобождён", "ok");
-}
-function showBusyBlock(a){
-  var html = "<div class=\"modal-bg\"><div class=\"alert-modal busy\" style=\"max-width:400px\">";
-  html += "<div class=\"icon\">" + icoWrap(ICO.phone) + "</div><h2>АККАУНТ ЗАНЯТ</h2>";
-  html += "<div class=\"info\"><div class=\"info-row\"><span class=\"lbl\">Аккаунт</span><span class=\"val\">" + esc(a.name||"") + "</span></div>";
-  if(a.issued_to) html += "<div class=\"info-row\"><span class=\"lbl\">Кому</span><span class=\"val\">" + esc(a.issued_to) + "</span></div>";
-  if(a.busy_at) html += "<div class=\"info-row\"><span class=\"lbl\">Занят с</span><span class=\"val\">" + esc(fmtSince(a.busy_at)) + "</span></div>";
-  html += "</div>";
-  html += "<div class=\"modal-actions\"><button class=\"btn btn-ghost\" onclick=\"closeModal()\">Понятно</button>";
-  html += "<button class=\"btn btn-danger\" onclick=\"closeModal();releaseAccount(" + a.id + ")\">" + icoWrap(ICO.unlock) + " Освободить</button></div></div></div>";
-  document.getElementById("modals").innerHTML = html;
-}
-function showBlockModal(a, kind, untilMs){
-  var isPerm = kind === "ban-perm"; var isBan = kind === "ban" || isPerm;
-  var cls = isBan ? "" : "warn"; var icon = isBan ? ICO.ban : ICO.clock;
-  var title = isPerm ? "ЗАБАНЕН НАВСЕГДА" : (isBan ? "АККАУНТ ПОД БАНОМ" : "КУЛДАУН CS2");
-  var reason = isBan ? a.ban_reason : a.cooldown_reason;
-  var untilISO = isBan ? a.ban_until : a.cooldown_until;
-  var html = "<div class=\"modal-bg\"><div class=\"alert-modal " + cls + "\">";
-  html += "<div class=\"icon\">" + icoWrap(icon) + "</div><h2>" + title + "</h2>";
-  html += "<div class=\"info\"><div class=\"info-row\"><span class=\"lbl\">Аккаунт</span><span class=\"val\">" + esc(a.name||"") + "</span></div>";
-  if(a.login) html += "<div class=\"info-row\"><span class=\"lbl\">Логин</span><span class=\"val\">" + esc(a.login) + "</span></div>";
-  html += "</div>";
-  if(!isPerm){
-    html += "<div class=\"info\"><div class=\"info-row\"><span class=\"lbl\">До</span><span class=\"val hl\">" + fmtDT(untilISO) + "</span></div>";
-    if(reason) html += "<div class=\"info-row\"><span class=\"lbl\">Причина</span><span class=\"val\">" + esc(reason) + "</span></div>";
-    html += "</div>";
-    html += "<div class=\"countdown " + (isBan ? "err" : "warn") + "\" id=\"cd_remaining\">Осталось: " + fmtRemaining(untilMs-Date.now()) + "</div>";
-  } else {
-    if(reason) html += "<div class=\"info\"><div class=\"info-row\"><span class=\"lbl\">Причина</span><span class=\"val err\">" + esc(reason) + "</span></div></div>";
-    html += "<div class=\"info\" style=\"background:rgba(224,92,92,0.08);border:1px solid rgba(224,92,92,0.15)\"><div style=\"font-size:13px;color:var(--err);text-align:center;line-height:1.5\">Бан бессрочный.<br>Снять можно только вручную.</div></div>";
-  }
-  html += "<div class=\"issue-hint\" style=\"margin-bottom:10px\">" + icoWrap(ICO.ban) + "<div>Выдача заблокирована.</div></div>";
-  html += "<div class=\"modal-actions\"><button class=\"btn btn-ghost\" onclick=\"openBlock(" + a.id + ")\">Управление</button><button class=\"btn btn-primary\" onclick=\"closeModal()\">Понятно</button></div>";
-  html += "</div></div>";
-  document.getElementById("modals").innerHTML = html;
-  if(!isPerm && untilMs){
-    stopCountdown();
-    window._cdTimer = setInterval(function(){
-      var e = document.getElementById("cd_remaining");
-      if(!e){ clearInterval(window._cdTimer); window._cdTimer = null; return; }
-      var left = untilMs - Date.now();
-      if(left <= 0){ clearInterval(window._cdTimer); window._cdTimer = null; e.textContent = "Истекло"; refreshNow(); return; }
-      e.textContent = "Осталось: " + fmtRemaining(left);
-    }, 1000);
-  }
-}
 
-/* ============================================================
- * Категории
- * ============================================================ */
-
-function createCategory(name){
-  name = String(name == null ? "" : name).trim().slice(0, 80);
-  if(!name){ toast("Введите имя категории", "err"); return null; }
-  var low = name.toLowerCase();
-  var dup = categories.filter(function(c){ return String(c.name||"").toLowerCase() === low; })[0];
-  if(dup){ toast("Категория с таким именем уже есть", "err"); return null; }
-  var nid = 0; categories.forEach(function(c){ if(c.id >= nid) nid = c.id+1; });
-  if(nid === 0) nid = 1;
-  var c = { id: nid, name: name, created_at: new Date().toISOString() };
-  categories.push(c);
-  persistCategories();
-  addLog("Категория создана: " + name, "info");
-  return c;
-}
-
-function renameCategory(id, newName){
-  id = Number(id);
-  newName = String(newName == null ? "" : newName).trim().slice(0, 80);
-  if(!newName){ toast("Введите имя категории", "err"); return false; }
-  var cat = getCategory(id);
-  if(!cat){ toast("Категория не найдена", "err"); return false; }
-  var low = newName.toLowerCase();
-  var dup = categories.filter(function(c){ return c.id !== id && String(c.name||"").toLowerCase() === low; })[0];
-  if(dup){ toast("Категория с таким именем уже есть", "err"); return false; }
-  var oldName = cat.name;
-  cat.name = newName;
-  persistCategories();
-  addLog("Категория переименована: " + oldName + " → " + newName, "info");
-  return true;
-}
-
-function deleteCategory(id){
-  id = Number(id);
-  var cat = getCategory(id);
-  if(!cat){ toast("Категория не найдена", "err"); return false; }
+function deleteShift(dateISO){
+  var shift = findShiftByDate(dateISO);
+  if(!shift) return;
   confirmAction({
-    title: "Удалить категорию?",
-    text: "Категория «" + cat.name + "» будет удалена. Аккаунты останутся, но потеряют категорию. Продолжить?",
+    title: "Удалить смену?",
+    text: "Смена за " + fmtDateRu(dateISO) + " будет удалена без возможности откатить (если не сделаете бэкап).",
     ok: "Удалить",
     cb: function(){
-      categories = categories.filter(function(c){ return c.id !== id; });
-      accounts.forEach(function(a){ if(a.category_id === id) a.category_id = null; });
-      persistCategories();
-      persist();
-      rebuildAccountIndex();
-      if(String(currentCategoryFilter) === String(id)) currentCategoryFilter = "all";
-      addLog("Категория удалена: " + cat.name, "warn");
-      renderList();
-      toast("Категория удалена", "ok");
+      shifts = shifts.filter(function(s){ return s.date !== dateISO; });
+      persistShifts();
+      addLog("Касса: смена удалена " + fmtDateRu(dateISO), "warn");
+      closeModal();
+      toast("Смена удалена", "ok");
+      renderRoute();
     }
   });
-  return true;
-}
-
-function openCategoryManager(){
-  var html = "<div class=\"modal-bg\" onclick=\"if(event.target===this)closeModal()\"><div class=\"modal\" onclick=\"event.stopPropagation()\">";
-  html += "<h2>" + icoWrap(ICO.folder) + "Категории</h2>";
-
-  html += "<div class=\"field\"><label>Новая категория</label>";
-  html += "<input id=\"cat_new_name\" type=\"text\" maxlength=\"80\" placeholder=\"Например: VIP\">";
-  html += "<button class=\"btn btn-primary\" style=\"margin-top:8px;width:100%\" onclick=\"addCategoryFromForm()\">" + icoWrap(ICO.check) + " Добавить</button>";
-  html += "</div>";
-
-  var sorted = categories.slice().sort(function(a,b){ return (a.name||"").localeCompare(b.name||"","ru"); });
-  if(sorted.length === 0){
-    html += "<div class=\"empty\" style=\"padding:24px 20px\"><span class=\"ico-empty\">" + ICO.folder + "</span><div>Пока нет категорий. Создайте первую.</div></div>";
-  } else {
-    html += "<div class=\"field\"><label>Существующие</label>";
-    sorted.forEach(function(c){
-      var cnt = accounts.filter(function(a){ return a.category_id === c.id; }).length;
-      html += "<div class=\"card\" data-cid=\"" + c.id + "\" style=\"margin-bottom:8px\">";
-      html += "<div class=\"card-head\" style=\"margin-bottom:6px\">";
-      html += "<input class=\"input inline\" id=\"cat_name_" + c.id + "\" type=\"text\" maxlength=\"80\" value=\"" + esc(c.name) + "\" style=\"font-weight:700\">";
-      html += "</div>";
-      html += "<div class=\"muted3\" style=\"margin-bottom:8px\">Аккаунтов: " + cnt + "</div>";
-      html += "<div class=\"row tight\">";
-      html += "<button class=\"btn btn-sm btn-ghost\" onclick=\"saveCategoryName(" + c.id + ")\">" + icoWrap(ICO.check) + " Сохранить</button>";
-      html += "<button class=\"btn btn-sm btn-danger\" onclick=\"deleteCategory(" + c.id + ")\">" + icoWrap(ICO.trash) + " Удалить</button>";
-      html += "</div>";
-      html += "</div>";
-    });
-    html += "</div>";
-  }
-
-  html += "<div class=\"modal-actions\"><button class=\"btn btn-primary\" onclick=\"closeModal()\">Закрыть</button></div>";
-  html += "</div></div>";
-  document.getElementById("modals").innerHTML = html;
-}
-
-function addCategoryFromForm(){
-  var el = document.getElementById("cat_new_name");
-  if(!el) return;
-  var name = el.value;
-  if(createCategory(name)){
-    renderList();
-    openCategoryManager();
-    toast("Категория создана", "ok");
-  }
-}
-
-function saveCategoryName(id){
-  var el = document.getElementById("cat_name_" + id);
-  if(!el) return;
-  if(renameCategory(id, el.value)){
-    renderList();
-    openCategoryManager();
-    toast("Категория переименована", "ok");
-  }
 }
 
 /* ============================================================
- * История
+ * Страница: История действий
  * ============================================================ */
 
-function openHistory(){
-  var html = "<div class=\"modal-bg\" onclick=\"if(event.target===this)closeModal()\"><div class=\"modal\" onclick=\"event.stopPropagation()\">";
-  html += "<h2>" + icoWrap(ICO.history) + "История</h2>";
+function renderHistoryPage(){
+  var html = "";
+  html += "<div class=\"section-head\"><div class=\"title\">История</div></div>";
 
   if(actionLog.length === 0){
-    html += "<div class=\"empty\" style=\"padding:40px 20px\"><span class=\"ico-empty\">" + ICO.empty + "</span><div>Пока ничего не происходило</div></div>";
-    html += "<div class=\"modal-actions\"><button class=\"btn btn-primary\" onclick=\"closeModal()\">Закрыть</button></div></div></div>";
-    document.getElementById("modals").innerHTML = html;
-    return;
+    html += "<div class=\"empty\"><span class=\"ico-empty\">" + ICO.empty + "</span><div>Пока ничего не происходило</div></div>";
+    return html;
   }
 
   html += "<div class=\"field\"><label>Тип события</label>";
   html += "<select class=\"sort-select\" onchange=\"historyFilterKind=this.value;renderHistoryList()\">";
-  html += "<option value=\"all\">Все</option>";
-  html += "<option value=\"info\">Информация</option>";
-  html += "<option value=\"ok\">Успех</option>";
-  html += "<option value=\"warn\">Предупреждение</option>";
-  html += "<option value=\"error\">Ошибки</option>";
+  html += "<option value=\"all\"" + (historyFilterKind === "all" ? " selected" : "") + ">Все</option>";
+  html += "<option value=\"info\"" + (historyFilterKind === "info" ? " selected" : "") + ">Информация</option>";
+  html += "<option value=\"ok\"" + (historyFilterKind === "ok" ? " selected" : "") + ">Успех</option>";
+  html += "<option value=\"warn\"" + (historyFilterKind === "warn" ? " selected" : "") + ">Предупреждение</option>";
+  html += "<option value=\"error\"" + (historyFilterKind === "error" ? " selected" : "") + ">Ошибки</option>";
   html += "</select></div>";
 
   html += "<div class=\"field\"><label>Аккаунт</label>";
@@ -1370,7 +1303,7 @@ function openHistory(){
   });
   accList.sort(function(x, y){ return (x.name||"").localeCompare(y.name||"", undefined, { numeric:true, sensitivity:"base" }); });
   accList.forEach(function(x){
-    html += "<option value=\"" + esc(x.id) + "\">" + esc(x.name) + "</option>";
+    html += "<option value=\"" + esc(x.id) + "\"" + (historyFilterAccId === String(x.id) ? " selected" : "") + ">" + esc(x.name) + "</option>";
   });
   html += "</select></div>";
 
@@ -1379,11 +1312,8 @@ function openHistory(){
   html += "<div class=\"modal-actions\">";
   html += "<button class=\"btn btn-ghost\" onclick=\"exportActionLog()\">" + icoWrap(ICO.down) + " Экспорт журнала</button>";
   html += "<button class=\"btn btn-danger\" onclick=\"clearLog()\">" + icoWrap(ICO.trash) + " Очистить</button>";
-  html += "<button class=\"btn btn-primary\" onclick=\"closeModal()\">Закрыть</button></div>";
-  html += "</div></div>";
-  document.getElementById("modals").innerHTML = html;
-
-  renderHistoryList();
+  html += "</div>";
+  return html;
 }
 
 function renderHistoryList(){
@@ -1444,43 +1374,54 @@ function exportActionLog(){
     toast("Журнал экспортирован", "ok");
   }
 }
-function clearLog(){ actionLog = []; saveActionLog(); closeModal(); renderList(); toast("История очищена", "ok"); }
+function clearLog(){ actionLog = []; saveActionLog(); renderRoute(); toast("История очищена", "ok"); }
 
 /* ============================================================
- * Меню (Настройки) + модалка горячих клавиш
+ * Страница: Настройки
  * ============================================================ */
 
-function openMenu(){
-  var html = "<div class=\"modal-bg\" onclick=\"if(event.target===this)closeModal()\"><div class=\"modal\" onclick=\"event.stopPropagation()\">";
-  html += "<h2>" + icoWrap(ICO.settings) + "Настройки</h2>";
+function renderSettingsPage(){
+  var html = "";
+  html += "<div class=\"section-head\"><div class=\"title\">Настройки</div></div>";
+
   html += "<div class=\"field\"><label>Категории</label>";
   html += "<button class=\"btn btn-ghost menu-action\" onclick=\"openCategoryManager()\">" + icoWrap(ICO.folder) + " Управление категориями</button>";
   html += "</div>";
+
   html += "<div class=\"field\"><label>Массовые действия</label>";
   html += "<button class=\"btn btn-ghost menu-action\" onclick=\"releaseAllBusy()\">" + icoWrap(ICO.unlock) + " Освободить все занятые</button>";
   html += "<button class=\"btn btn-ghost menu-action\" onclick=\"clearAllCooldowns()\">" + icoWrap(ICO.clock) + " Снять все кулдауны</button>";
   html += "<button class=\"btn btn-ghost menu-action\" onclick=\"clearAllBans()\">" + icoWrap(ICO.ban) + " Снять все баны</button>";
   html += "</div>";
+
   html += "<div class=\"field\"><label>Данные</label>";
   html += "<button class=\"btn btn-ghost menu-action\" onclick=\"exportData()\">" + icoWrap(ICO.down) + " Экспорт JSON</button>";
   html += "<button class=\"btn btn-ghost menu-action\" onclick=\"openImport()\">" + icoWrap(ICO.edit) + " Импорт JSON</button>";
   html += "<div class=\"issue-hint\" style=\"margin-top:8px\">" + icoWrap(ICO.info) + "<div>Данные хранятся локально в вашем браузере. Для переноса на другое устройство используйте экспорт/импорт.</div></div>";
   html += "</div>";
+
   var _sn = lsGetJson("undo_snap", null);
-  if(_sn && _sn.label) html += "<div class=\"field\"><label>Откат</label><button class=\"btn btn-ghost menu-action\" onclick=\"rollbackSnap()\">" + icoWrap(ICO.history) + " Откатить: " + esc(_sn.label) + "</button></div>";
+  if(_sn && _sn.label){
+    html += "<div class=\"field\"><label>Откат</label>";
+    html += "<button class=\"btn btn-ghost menu-action\" onclick=\"rollbackSnap()\">" + icoWrap(ICO.history) + " Откатить: " + esc(_sn.label) + "</button>";
+    html += "</div>";
+  }
+
   html += "<div class=\"field\"><label>Интерфейс</label>";
   var _ui = lsGetJson("ui", {});
   var hintsEnabled = _ui.hintsBar === undefined ? true : !!_ui.hintsBar;
   html += "<button class=\"btn btn-ghost menu-action\" onclick=\"toggleHintsBar()\">" + icoWrap(ICO.help) + " Плашка подсказок: " + (hintsEnabled ? "включена" : "выключена") + "</button>";
   html += "</div>";
+
   html += "<div class=\"field\"><label>Информация</label><div class=\"app-info\">";
   html += "<div><span>Аккаунтов</span><b>" + accounts.length + "</b></div>";
   html += "<div><span>Категорий</span><b>" + categories.length + "</b></div>";
+  html += "<div><span>Смен</span><b>" + shifts.length + "</b></div>";
   html += "<div><span>Последний бэкап</span><b>" + esc(backupAgeStr()) + "</b></div>";
-  html += "<div><span>Версия</span><b>PC-15.2</b></div>";
+  html += "<div><span>Версия</span><b>PC-16.1</b></div>";
   html += "</div></div>";
-  html += "<div class=\"modal-actions\"><button class=\"btn btn-primary\" onclick=\"closeModal()\">Закрыть</button></div></div></div>";
-  document.getElementById("modals").innerHTML = html;
+
+  return html;
 }
 
 function toggleHintsBar(){
@@ -1489,7 +1430,34 @@ function toggleHintsBar(){
   ui.hintsBar = !cur;
   lsSetJson("ui", ui);
   renderHintsBar();
-  renderList();
+}
+
+function renderHintsBar(){
+  var host = document.getElementById("hintsBar");
+  if(!host) return;
+  var ui = lsGetJson("ui", {});
+  var enabled = ui.hintsBar === undefined ? true : !!ui.hintsBar;
+  if(!enabled){ host.innerHTML = ""; return; }
+  host.innerHTML =
+    "<div class=\"hints-hint\" onclick=\"openHotkeysModal()\" style=\"cursor:pointer\">" +
+      "<span><span class=\"kbd\">n</span> новый</span>" +
+      "<span style=\"opacity:.4\">·</span>" +
+      "<span><span class=\"kbd\">/</span> поиск</span>" +
+      "<span style=\"opacity:.4\">·</span>" +
+      "<span><span class=\"kbd\">h</span> история</span>" +
+      "<span style=\"opacity:.4\">·</span>" +
+      "<span><span class=\"kbd\">?</span> справка</span>" +
+    "</div>" +
+    "<button class=\"hints-bar-close\" onclick=\"event.stopPropagation();closeHintsBar()\" title=\"Скрыть\">×</button>";
+  host.setAttribute("onclick", "openHotkeysModal()");
+}
+
+function closeHintsBar(){
+  var ui = lsGetJson("ui", {});
+  ui.hintsBar = false;
+  lsSetJson("ui", ui);
+  var host = document.getElementById("hintsBar");
+  if(host){ host.innerHTML = ""; host.removeAttribute("onclick"); }
 }
 
 function openHotkeysModal(){
@@ -1500,8 +1468,8 @@ function openHotkeysModal(){
       { keys: ["Esc"], desc: "Закрыть модалку / сбросить поиск" }
     ]},
     { group: "Навигация", items: [
-      { keys: ["h"], desc: "История" },
-      { keys: ["s"], desc: "Настройки" },
+      { keys: ["h"], desc: "Раздел История" },
+      { keys: ["s"], desc: "Раздел Настройки" },
       { keys: ["g"], desc: "Управление категориями" },
       { keys: ["1"], desc: "Фильтр «Все»" },
       { keys: ["2"], desc: "Фильтр «Свободные»" },
@@ -1615,6 +1583,7 @@ function importData(){
   var data = safeJson(el.value.trim(), null);
   if(!data || !Array.isArray(data.accounts)){ toast("Неверный формат JSON", "err"); return; }
   if(data.categories != null && !Array.isArray(data.categories)){ toast("Поле categories должно быть массивом", "err"); return; }
+  if(data.shifts != null && !Array.isArray(data.shifts)){ toast("Поле shifts должно быть массивом", "err"); return; }
 
   var imported = [];
   var skipped = 0;
@@ -1622,11 +1591,6 @@ function importData(){
     if(!isValidImportItem(raw)){ skipped++; return; }
     var n = normalizeAccount(raw); if(n) imported.push(n); else skipped++;
   });
-  if(!imported.length){
-    if(data.accounts.length){ toast("Не найдено корректных аккаунтов (пропущено " + skipped + ")", "err"); }
-    else { toast("В файле нет аккаунтов для импорта", "err"); }
-    return;
-  }
 
   var seen = {}, mx = 0;
   imported.forEach(function(x){ if(x.id > mx) mx = x.id; });
@@ -1670,21 +1634,43 @@ function importData(){
     });
   }
 
+  /* [UG-WEB-03][iter2][B] Различаем:
+     - data.shifts === undefined → cleanShifts = null (поля нет — не трогаем);
+     - data.shifts === []        → cleanShifts = []   (пусто — при replace очищаем);
+     - data.shifts === [..]      → массив. */
+  var cleanShifts = null;
+  if(Array.isArray(data.shifts)){
+    cleanShifts = [];
+    data.shifts.forEach(function(rs){
+      var s = normalizeShift(rs);
+      if(s) cleanShifts.push(s);
+    });
+  }
+
+  if(!imported.length && (!cleanCats || !cleanCats.length) && (cleanShifts === null || !cleanShifts.length)){
+    if(!imported.length && cleanShifts === null && (!cleanCats || !cleanCats.length)){
+      toast("Нечего импортировать", "err");
+      return;
+    }
+  }
+
   var mode = (window._importMode === "replace") ? "replace" : "merge";
 
   if(mode === "merge"){
     var preview = previewMerge(imported);
-    var msgM = "Текущих: " + accounts.length + "; добавится: " + preview.added + "; обновится: " + preview.updated + ".";
+    var msgM = "Текущих аккаунтов: " + accounts.length + "; добавится: " + preview.added + "; обновится: " + preview.updated + ".";
     if(skipped > 0) msgM += "\nПропущено некорректных: " + skipped + ".";
     if(dupNames.length > 0) msgM += "\nДубли (логин+категория) внутри файла обнулены у: " + dupNames.join(", ") + ".";
     if(cleanCats) msgM += "\nКатегорий в файле: " + cleanCats.length + ".";
-    confirmAction({title:"Добавить к текущим?", text:msgM, ok:"Добавить", cb:function(){ applyImport(imported, cleanLog, cleanCats, "merge"); }});
+    if(cleanShifts !== null) msgM += "\nСмен в файле: " + cleanShifts.length + ".";
+    confirmAction({title:"Добавить к текущим?", text:msgM, ok:"Добавить", cb:function(){ applyImport(imported, cleanLog, cleanCats, cleanShifts, "merge"); }});
   } else {
-    var msgR = "Текущий список (" + accounts.length + ") будет потерян. Новых записей: " + imported.length + ".";
+    var msgR = "Текущие данные будут потеряны. Аккаунтов: " + imported.length + ".";
     if(skipped > 0) msgR += "\nПропущено некорректных: " + skipped + ".";
     if(dupNames.length > 0) msgR += "\nДубли (логин+категория) обнулены у: " + dupNames.join(", ") + ".";
     if(cleanCats) msgR += "\nКатегорий в файле: " + cleanCats.length + ".";
-    confirmAction({title:"Заменить данные?", text:msgR, ok:"Заменить", cb:function(){ applyImport(imported, cleanLog, cleanCats, "replace"); }});
+    if(cleanShifts !== null) msgR += "\nСмен в файле: " + cleanShifts.length + ".";
+    confirmAction({title:"Заменить данные?", text:msgR, ok:"Заменить", cb:function(){ applyImport(imported, cleanLog, cleanCats, cleanShifts, "replace"); }});
   }
 }
 function previewMerge(imported){
@@ -1816,11 +1802,42 @@ function mapCategories(inCats, mode){
   return idMap;
 }
 
-function applyImport(imported, logIn, inCats, mode){
+/* [UG-WEB-03][iter2][B] null и [] — разные состояния.
+   null  — поля нет в файле: не трогаем (даже в replace).
+   []    — поле явно пустое: в replace очищаем, в merge не трогаем.
+   [..]  — replace: заменить; merge: обновить по дате/добавить. */
+function mergeShiftsByDate(inShifts, mode){
+  if(inShifts == null){ return; }
+  if(mode === "replace"){
+    shifts = [];
+    if(inShifts.length === 0){ persistShifts(); return; }
+  } else {
+    if(inShifts.length === 0){ return; }
+  }
+  inShifts.forEach(function(s){
+    var n = normalizeShift(s);
+    if(!n) return;
+    var existing = findShiftByDate(n.date);
+    if(existing){
+      existing.day = n.day;
+      existing.night = n.night;
+    } else {
+      var nid = 0; shifts.forEach(function(x){ if(x.id >= nid) nid = x.id+1; });
+      if(nid === 0) nid = 1;
+      n.id = nid;
+      shifts.push(n);
+    }
+  });
+  shifts.sort(function(a,b){ return b.date.localeCompare(a.date); });
+  persistShifts();
+}
+
+function applyImport(imported, logIn, inCats, inShifts, mode){
   if(mode !== "merge") mode = "replace";
   takeSnapshot("Импорт");
 
   var catMap = mapCategories(inCats, mode);
+  mergeShiftsByDate(inShifts, mode);
 
   var finalList, added = 0, updated = 0;
   if(mode === "merge"){
@@ -1850,7 +1867,7 @@ function applyImport(imported, logIn, inCats, mode){
   _prevVisibleIds = new Set();
   if(logIn){ actionLog = logIn; saveActionLog(); }
   persist();
-  closeModal(); renderList(); scheduleExpireCheck();
+  closeModal(); renderRoute(); scheduleExpireCheck();
   if(mode === "merge"){ toast("Добавлено: " + added + ", обновлено: " + updated, "ok"); addLog("Импорт (слияние): добавлено " + added + ", обновлено " + updated, "info"); }
   else { toast("Импортировано: " + finalList.length, "ok"); addLog("Импорт (замена): " + finalList.length + " записей", "info"); }
 }
@@ -1861,10 +1878,11 @@ function exportData(){
 function doExport(){
   var data = {
     exported: new Date().toISOString(),
-    version: "PC-15.2",
+    version: "PC-16.1",
     brand: "United Gamers",
     accounts: accounts,
     categories: categories,
+    shifts: shifts,
     actionLog: actionLog.slice(0, 20)
   };
   var json = JSON.stringify(data, null, 2);
@@ -1892,7 +1910,7 @@ function confirmAction(o){
 
 function takeSnapshot(label){
   try{
-    var json = JSON.stringify({t: fmtDT(new Date().toISOString()), label: label, accounts: accounts, categories: categories});
+    var json = JSON.stringify({t: fmtDT(new Date().toISOString()), label: label, accounts: accounts, categories: categories, shifts: shifts});
     if(json.length > 1500000){ toast("Снимок слишком большой, пропущен", "err"); return; }
     lsSet("undo_snap", json);
   }catch(e){}
@@ -1907,8 +1925,12 @@ function rollbackSnap(){
       categories = sn.categories.map(normalizeCategory).filter(function(c){ return c && c.name; });
       persistCategories();
     }
+    if(Array.isArray(sn.shifts)){
+      shifts = sn.shifts.map(normalizeShift).filter(Boolean).sort(function(a,b){ return b.date.localeCompare(a.date); });
+      persistShifts();
+    }
     rebuildAccountIndex(); persist(); addLog("Откат: " + sn.label, "warn");
-    closeModal(); renderList(); scheduleExpireCheck(); toast("Данные восстановлены", "ok");
+    closeModal(); renderRoute(); scheduleExpireCheck(); toast("Данные восстановлены", "ok");
   }});
 }
 
@@ -1926,7 +1948,7 @@ function doMassAction(label, predicate, mutateLocal){
   if(!targets.length){ toast(label + ": нет подходящих", "err"); return; }
   targets.forEach(mutateLocal);
   persist(); addLog(label + ": " + targets.length, "info");
-  closeModal(); renderList(); scheduleExpireCheck();
+  closeModal(); renderRoute(); scheduleExpireCheck();
   toast(label + ": " + targets.length, "ok");
 }
 function releaseAllBusy(){ runMassAction("Освобождено", function(a){ return Number(a.busy) === 1; }, function(a){ a.busy=0; a.busy_at=null; a.issued_to=""; }); }
@@ -1943,6 +1965,7 @@ function visibleAccountIds(){
 }
 
 function moveFocus(delta){
+  if(currentRoute !== "accounts") return;
   var ids = visibleAccountIds();
   if(!ids.length) return;
   var curIdx = hoveredAccountId == null ? -1 : ids.indexOf(hoveredAccountId);
@@ -1984,18 +2007,28 @@ document.addEventListener("keydown", function(e){
   }
 
   if(!mOpen){
-    if(e.key === "n" || e.key === "N" || e.key === "т" || e.key === "Т"){ e.preventDefault(); openEdit(null); return; }
-    if(e.key === "/" || e.key === "."){ var si = document.getElementById("searchInput"); if(si){ e.preventDefault(); si.focus(); } return; }
+    if(e.key === "n" || e.key === "N" || e.key === "т" || e.key === "Т"){
+      if(currentRoute !== "accounts"){ switchRoute("accounts"); }
+      e.preventDefault(); openEdit(null); return;
+    }
+    if(e.key === "/" || e.key === "."){
+      if(currentRoute !== "accounts"){ switchRoute("accounts"); }
+      var si = document.getElementById("searchInput");
+      if(si){ e.preventDefault(); si.focus(); }
+      return;
+    }
   }
 
   if(mOpen || hasCtrl) return;
 
-  if(e.key === "h" || e.key === "H" || e.key === "р" || e.key === "Р"){ e.preventDefault(); openHistory(); return; }
-  if(e.key === "s" || e.key === "S" || e.key === "ы" || e.key === "Ы"){ e.preventDefault(); openMenu(); return; }
+  if(e.key === "h" || e.key === "H" || e.key === "р" || e.key === "Р"){ e.preventDefault(); switchRoute("history"); return; }
+  if(e.key === "s" || e.key === "S" || e.key === "ы" || e.key === "Ы"){ e.preventDefault(); switchRoute("settings"); return; }
   if(e.key === "g" || e.key === "G" || e.key === "п" || e.key === "П"){ e.preventDefault(); openCategoryManager(); return; }
 
   if(e.shiftKey && (e.key === "E" || e.key === "У")){ e.preventDefault(); exportData(); return; }
   if(e.shiftKey && (e.key === "I" || e.key === "Ш")){ e.preventDefault(); openImport(); return; }
+
+  if(currentRoute !== "accounts") return;
 
   if(e.key === "1"){ e.preventDefault(); currentFilter = "all"; vib("tick"); renderList(); return; }
   if(e.key === "2"){ e.preventDefault(); setFilter("free"); return; }
@@ -2042,6 +2075,13 @@ window.addEventListener("visibilitychange", function(){
   }
 });
 
+window.addEventListener("hashchange", function(){
+  var h = (location.hash || "").replace(/^#/, "");
+  if(h === "accounts" || h === "cash" || h === "history" || h === "settings"){
+    if(h !== currentRoute){ currentRoute = h; renderRoute(); applyRouteHighlight(); }
+  }
+});
+
 window.addEventListener("storage", function(e){
   if(!e || !e.key) return;
   if(e.key === "ug:data_rev"){
@@ -2049,9 +2089,10 @@ window.addEventListener("storage", function(e){
     if(newRev === _dataRev) return;
     toast("Данные обновлены из другой вкладки");
     loadCategories();
+    loadShifts();
     loadAccounts(true);
     _dataRev = newRev;
-    renderList();
+    renderRoute();
     return;
   }
   if(e.key === "ug:categories"){
@@ -2060,12 +2101,17 @@ window.addEventListener("storage", function(e){
       var still = categories.some(function(c){ return String(c.id) === currentCategoryFilter; });
       if(!still){ currentCategoryFilter = "all"; }
     }
-    renderList();
+    renderRoute();
+    return;
+  }
+  if(e.key === "ug:shifts"){
+    loadShifts();
+    if(currentRoute === "cash") renderRoute();
     return;
   }
   if(e.key === "ug:view"){
     var v = e.newValue;
-    if(v === "table" || v === "cards"){ currentView = v; renderList(); }
+    if(v === "table" || v === "cards"){ currentView = v; renderRoute(); }
     return;
   }
   if(e.key === "ug:last_export"){ if(e.newValue) LAST_EXPORT = String(e.newValue); return; }
@@ -2077,13 +2123,499 @@ window.addEventListener("storage", function(e){
 });
 
 var _wasT = tableMode();
-window.addEventListener("resize", function(){ var t = tableMode(); if(t !== _wasT){ _wasT = t; renderList(); } });
+window.addEventListener("resize", function(){ var t = tableMode(); if(t !== _wasT){ _wasT = t; if(currentRoute === "accounts") renderRoute(); } });
 window.addEventListener("beforeunload", function(){
   if(refreshTimer) clearInterval(refreshTimer);
   if(_expireTimer) clearTimeout(_expireTimer);
   if(_clipClearTimer) clearTimeout(_clipClearTimer);
   stopCountdown();
 });
+
+/* ============================================================
+ * Модалки: аккаунты, блокировки, категории, выдача
+ * ============================================================ */
+
+function openEdit(id){
+  if(tapGuard()) return;
+  vib("click");
+  var a = id != null ? getAccount(id) : null;
+  var isNew = !a; window._editId = a ? a.id : null;
+  var nm = a ? (a.name||"") : ""; var lgn = a ? (a.login||"") : ""; var pwd = a ? (a.password||"") : "";
+  var catId = a ? a.category_id : null;
+  var sortedCats = categories.slice().sort(function(x,y){ return (x.name||"").localeCompare(y.name||"","ru"); });
+  var html = "<div class=\"modal-bg\" onclick=\"if(event.target===this)closeModal()\"><div class=\"modal\" onclick=\"event.stopPropagation()\">";
+  html += "<h2>" + icoWrap(ICO.edit) + (isNew ? "Новый аккаунт" : "Редактировать") + "</h2>";
+  html += "<div class=\"field\"><label>Имя аккаунта *</label><input id=\"f_name\" type=\"text\" value=\"" + esc(nm) + "\" placeholder=\"club_01\" autocomplete=\"off\"></div>";
+  html += "<div class=\"field\"><label>Логин Steam</label><input id=\"f_login\" type=\"text\" value=\"" + esc(lgn) + "\" placeholder=\"login_name\" autocomplete=\"off\"></div>";
+  html += "<div class=\"field\"><label>Пароль</label><div class=\"pass-wrap\"><input id=\"f_pass\" type=\"password\" value=\"" + esc(pwd) + "\" placeholder=\"пароль\" autocomplete=\"off\"><button class=\"eye\" onclick=\"togglePass()\">👁</button></div></div>";
+  html += "<div class=\"field\"><label>Категория</label><select id=\"f_category\" class=\"sort-select\">";
+  html += "<option value=\"\"" + (catId == null ? " selected" : "") + ">— без категории —</option>";
+  sortedCats.forEach(function(c){
+    html += "<option value=\"" + c.id + "\"" + (String(catId) === String(c.id) ? " selected" : "") + ">" + esc(c.name) + "</option>";
+  });
+  html += "</select><button class=\"btn btn-ghost\" style=\"margin-top:8px\" onclick=\"openCategoryManager()\">" + icoWrap(ICO.folder) + " Управление категориями</button></div>";
+  html += "<div class=\"modal-actions\"><button class=\"btn btn-ghost\" onclick=\"closeModal()\">Отмена</button>";
+  html += "<button class=\"btn btn-primary\" onclick=\"saveAccount(" + (isNew?"null":id) + ")\">" + icoWrap(ICO.check) + " Сохранить</button></div>";
+  if(!isNew){ html += "<div class=\"modal-actions\" style=\"margin-top:10px\"><button class=\"btn btn-danger\" onclick=\"confirmDelete(" + id + ")\">" + icoWrap(ICO.trash) + " Удалить</button></div>"; }
+  html += "</div></div>";
+  document.getElementById("modals").innerHTML = html;
+}
+
+function togglePass(){ var el = document.getElementById("f_pass"); if(!el) return; el.type = el.type === "password" ? "text" : "password"; vib("tick"); }
+
+function saveAccount(id){
+  var nameEl = document.getElementById("f_name");
+  var loginEl = document.getElementById("f_login");
+  var passEl = document.getElementById("f_pass");
+  var catEl = document.getElementById("f_category");
+  if(!nameEl || !loginEl || !passEl){ toast("Форма недоступна", "err"); return; }
+  var nm = nameEl.value.trim();
+  var lgn = loginEl.value.trim();
+  var pwd = passEl.value;
+  var catVal = catEl ? catEl.value : "";
+  var catId = (catVal === "" ? null : Number(catVal));
+  if(catId !== null && (isNaN(catId) || catId <= 0)) catId = null;
+  if(!nm){ toast("Введите имя аккаунта", "err"); return; }
+  var catKey = (catId === null ? "null" : String(catId));
+  var dup = accounts.filter(function(x){
+    return lgn
+      && x.id !== id
+      && x.login.toLowerCase() === lgn.toLowerCase()
+      && String(x.category_id === null ? "null" : x.category_id) === catKey;
+  })[0];
+  if(dup){ toast("Логин уже занят в этой категории: " + dup.name, "err"); return; }
+  var editingId = (id == null) ? null : Number(id);
+  if(id == null){
+    var newId = 0; accounts.forEach(function(x){ if(x.id >= newId) newId = x.id+1; });
+    if(newId === 0) newId = 1;
+    accounts.push(normalizeAccount({ id:newId, name:nm, login:lgn, password:pwd, category_id:catId, created_at:new Date().toISOString() }));
+    addLog("Создан: " + nm, "ok");
+  } else {
+    for(var i=0;i<accounts.length;i++){
+      if(accounts[i].id === id){
+        accounts[i].name = nm;
+        accounts[i].login = lgn;
+        accounts[i].password = pwd;
+        accounts[i].category_id = catId;
+        break;
+      }
+    }
+    addLog("Изменён: " + nm, "info", editingId);
+  }
+  persist();
+  rebuildAccountIndex();
+  closeModal(); renderRoute(); vib("click");
+  toast(id == null ? "Аккаунт добавлен" : "Изменения сохранены", "ok");
+}
+
+function confirmDelete(id){
+  var a = getAccount(id); if(!a) return;
+  var html = "<div class=\"modal-bg\"><div class=\"alert-modal\" style=\"max-width:400px\">";
+  html += "<div class=\"icon\">" + icoWrap(ICO.trash) + "</div><h2>Удалить аккаунт?</h2>";
+  html += "<div class=\"info\"><div class=\"info-row\"><span class=\"lbl\">Аккаунт</span><span class=\"val\">" + esc(a.name||"") + "</span></div></div>";
+  html += "<div class=\"modal-actions\"><button class=\"btn btn-ghost\" onclick=\"closeModal()\">Отмена</button>";
+  html += "<button class=\"btn btn-danger\" onclick=\"deleteAccount(" + id + ")\">Удалить</button></div></div></div>";
+  document.getElementById("modals").innerHTML = html;
+}
+
+function deleteAccount(id){
+  if(tapGuard()) return;
+  var nm = ""; accounts.forEach(function(x){ if(x.id === id) nm = x.name; });
+  var targetId = Number(id);
+  accounts = accounts.filter(function(x){ return x.id !== id; });
+  delete revealedPasswords[id];
+  addLog("Удалён: " + nm, "danger", targetId);
+  persist();
+  rebuildAccountIndex();
+  closeModal();
+  renderRoute(); vib("heavy");
+  toast("Аккаунт удалён", "ok");
+}
+
+function copyText(value, btnId, label){
+  if(!value){ toast("Значение пустое", "err"); return false; }
+  var ok = copyToClipboard(value);
+  if(!ok){ toast("Не удалось скопировать", "err"); return false; }
+  vib("click");
+  toast(label + " · очистка через 30с", "ok");
+  var btn = btnId ? document.getElementById(btnId) : null;
+  if(btn){
+    if(!btn.dataset.orig) btn.dataset.orig = btn.innerHTML;
+    btn.classList.add("done");
+    btn.innerHTML = icoWrap(ICO.check) + " Скопировано";
+    setTimeout(function(){
+      btn.classList.remove("done");
+      if(btn.dataset.orig) btn.innerHTML = btn.dataset.orig;
+    }, 1500);
+  }
+  if(_clipClearTimer){ clearTimeout(_clipClearTimer); _clipClearTimer = null; }
+  _clipClearTimer = setTimeout(function(){
+    _clipClearTimer = null;
+    try{
+      var p = readClipboard();
+      if(p && typeof p.then === "function"){
+        p.then(function(cur){
+          if(cur === null) return;
+          if(cur === value) copyToClipboard("");
+        }).catch(function(){});
+      }
+    }catch(e){}
+  }, 30000);
+  return true;
+}
+
+function copyIssueField(id, kind, btnId){
+  var a = getAccount(id); if(!a) return;
+  var value = kind === "login" ? (a.login||"") : (a.password||"");
+  var label = kind === "login" ? "Логин скопирован" : "Пароль скопирован";
+  if(copyText(value, btnId, label)) window._issueCopied = id;
+}
+function toggleReveal(id){ revealedPasswords[id] = !revealedPasswords[id]; vib("tick"); maskUpdate(id); }
+function maskUpdate(id){
+  var a = getAccount(id), v = document.getElementById("issue-pass"), b = document.getElementById("issue-reveal");
+  if(!a || !v) return;
+  var r = !!revealedPasswords[id];
+  v.textContent = r ? (a.password || "—") : (a.password ? "••••••••" : "—");
+  v.className = r ? "issue-value" : "issue-value masked";
+  if(b) b.textContent = r ? "🙈 Скрыть" : "👁 Показать";
+}
+
+function openBlock(id){
+  if(tapGuard()) return;
+  var a = getAccount(id); if(!a) return;
+  var activeType = (Number(a.ban_permanent) === 1 || a.ban_ts) ? "ban" : "cool";
+  var html = "<div class=\"modal-bg\" onclick=\"if(event.target===this)closeModal()\"><div class=\"modal\" onclick=\"event.stopPropagation()\">";
+  html += "<h2>" + icoWrap(ICO.lock) + "Блокировка</h2>";
+  html += "<div class=\"type-tabs\">";
+  html += "<button class=\"type-tab" + (activeType === "ban" ? " active" : "") + "\" data-t=\"ban\" onclick=\"switchType('ban')\">" + icoWrap(ICO.ban) + " Бан</button>";
+  html += "<button class=\"type-tab" + (activeType === "cool" ? " active" : "") + "\" data-t=\"cool\" onclick=\"switchType('cool')\">" + icoWrap(ICO.clock) + " Кулдаун</button>";
+  html += "</div>";
+  html += "<div id=\"quickBan\" style=\"display:" + (activeType === "ban" ? "block" : "none") + "\">";
+  html += "<div class=\"field\"><label>Быстрый выбор</label><div class=\"quick-grid\">";
+  html += "<button class=\"quick-btn\" onclick=\"setQuick(" + id + ",'ban',1440)\">1 день</button>";
+  html += "<button class=\"quick-btn\" onclick=\"setQuick(" + id + ",'ban',4320)\">3 дня</button>";
+  html += "<button class=\"quick-btn\" onclick=\"setQuick(" + id + ",'ban',10080)\">7 дней</button>";
+  html += "<button class=\"quick-btn\" onclick=\"setQuick(" + id + ",'ban',43200)\">30 дней</button>";
+  html += "<button class=\"quick-btn wide\" onclick=\"setPermanent(" + id + ")\">" + icoWrap(ICO.ban) + " Навсегда</button>";
+  html += "</div></div></div>";
+  html += "<div id=\"quickCool\" style=\"display:" + (activeType === "cool" ? "block" : "none") + "\">";
+  html += "<div class=\"field\"><label>Быстрый выбор (CS2)</label><div class=\"quick-grid\">";
+  html += "<button class=\"quick-btn\" onclick=\"setQuick(" + id + ",'cool',30)\">30 мин</button>";
+  html += "<button class=\"quick-btn\" onclick=\"setQuick(" + id + ",'cool',120)\">2 часа</button>";
+  html += "<button class=\"quick-btn\" onclick=\"setQuick(" + id + ",'cool',1440)\">24 часа</button>";
+  html += "<button class=\"quick-btn\" onclick=\"setQuick(" + id + ",'cool',10080)\">7 дней</button>";
+  html += "</div></div></div>";
+  html += "<div class=\"field\"><label>Точное время окончания</label><input id=\"b_dt\" type=\"datetime-local\" value=\"" + defaultDateTimeLocal() + "\"></div>";
+  html += "<div class=\"field\"><label>Причина</label><textarea id=\"b_reason\" placeholder=\"Например: VAC, CS2 cooldown\"></textarea></div>";
+  html += "<div class=\"modal-actions\"><button class=\"btn btn-ghost\" onclick=\"closeModal()\">Отмена</button>";
+  html += "<button class=\"btn btn-warn\" onclick=\"saveBlockFromInput(" + id + ")\">" + icoWrap(ICO.check) + " Установить</button></div>";
+  if(Number(a.ban_permanent) === 1 || a.ban_ts){ html += "<div class=\"modal-actions\" style=\"margin-top:10px\"><button class=\"btn btn-danger\" onclick=\"clearBlock(" + id + ",'ban')\">" + icoWrap(ICO.unlock) + " Снять бан</button></div>"; }
+  if(a.cool_ts){ html += "<div class=\"modal-actions\" style=\"margin-top:10px\"><button class=\"btn btn-danger\" onclick=\"clearBlock(" + id + ",'cool')\">" + icoWrap(ICO.unlock) + " Снять кулдаун</button></div>"; }
+  html += "</div></div>";
+  document.getElementById("modals").innerHTML = html;
+  window._blockType = activeType;
+}
+function switchType(t){
+  window._blockType = t;
+  var tabs = document.querySelectorAll(".type-tab");
+  for(var i=0;i<tabs.length;i++){ var tab = tabs[i]; if(tab.getAttribute("data-t") === t) tab.classList.add("active"); else tab.classList.remove("active"); }
+  var qb = document.getElementById("quickBan"); var qc = document.getElementById("quickCool");
+  if(qb) qb.style.display = t === "ban" ? "block" : "none";
+  if(qc) qc.style.display = t === "cool" ? "block" : "none";
+  vib("tick");
+}
+function defaultDateTimeLocal(){ var d = new Date(Date.now()+60*60000); return d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate())+"T"+pad(d.getHours())+":"+pad(d.getMinutes()); }
+function setQuick(id, type, minutes){ var iso = new Date(Date.now()+minutes*60000).toISOString(); var el = document.getElementById("b_reason"); var reason = el ? el.value.trim() : ""; applyBlock(id, type, iso, false, reason); }
+function setPermanent(id){ var el = document.getElementById("b_reason"); var reason = el ? el.value.trim() : ""; applyBlock(id, "ban", null, true, reason); }
+function saveBlockFromInput(id){
+  var t = window._blockType || "cool";
+  var v = document.getElementById("b_dt").value;
+  if(!v){ toast("Выберите дату и время", "err"); return; }
+  var d = new Date(v);
+  if(isNaN(d.getTime())){ toast("Некорректная дата", "err"); return; }
+  if(d.getTime() <= Date.now()){ toast("Дата должна быть в будущем", "err"); return; }
+  var reason = document.getElementById("b_reason").value.trim();
+  applyBlock(id, t, d.toISOString(), false, reason);
+}
+function applyBlock(id, type, iso, permanent, reason){
+  id = Number(id);
+  if(!id){ toast("Ошибка: неверный ID", "err"); return; }
+  var target = getAccount(id);
+  if(!target){ toast("Аккаунт не найден", "err"); return; }
+  if(type === "ban" && permanent){
+    target.ban_until = null; target.ban_ts = null; target.ban_permanent = 1; target.ban_reason = reason;
+    target.cooldown_until = null; target.cool_ts = null; target.cooldown_reason = "";
+  } else if(type === "ban"){
+    target.ban_until = iso; target.ban_ts = new Date(iso).getTime(); target.ban_permanent = 0; target.ban_reason = reason;
+    target.cooldown_until = null; target.cool_ts = null; target.cooldown_reason = "";
+  } else {
+    target.cooldown_until = iso; target.cool_ts = new Date(iso).getTime(); target.cooldown_reason = reason;
+  }
+  if(type === "ban"){ target.busy = 0; target.busy_at = null; target.issued_to = ""; }
+  persist();
+  if(type === "ban" && permanent){ addLog("Бан навсегда: " + target.name, "warn", id); toast("Бан навсегда установлен", "ok"); }
+  else if(type === "ban"){ addLog("Бан: " + target.name + " до " + fmtDT(iso), "warn", id); toast("Бан до " + fmtDT(iso), "ok"); }
+  else { addLog("Кулдаун: " + target.name + " до " + fmtDT(iso), "warn", id); toast("Кулдаун до " + fmtDT(iso), "ok"); }
+  closeModal(); renderRoute(); scheduleExpireCheck(); vib("click");
+}
+function clearBlock(id, type){
+  id = Number(id);
+  var target = getAccount(id);
+  if(!target) return;
+  if(type === "ban"){
+    target.ban_until = null; target.ban_ts = null; target.ban_permanent = 0; target.ban_reason = "";
+    target.busy = 0; target.busy_at = null; target.issued_to = "";
+    addLog("Бан снят: " + target.name, "info", id); toast("Бан снят", "ok");
+  } else {
+    target.cooldown_until = null; target.cool_ts = null; target.cooldown_reason = "";
+    addLog("Кулдаун снят: " + target.name, "info", id); toast("Кулдаун снят", "ok");
+  }
+  persist();
+  closeModal(); renderRoute(); scheduleExpireCheck(); vib("click");
+}
+
+var issueDraft = {};
+
+function tryIssue(id){
+  if(tapGuard()) return;
+  var a = getAccount(id); if(!a) return;
+  vib("heavy"); var s = getStatus(a);
+  if(s === "ban-perm"){ showBlockModal(a, "ban-perm", null); return; }
+  if(s === "ban"){ showBlockModal(a, "ban", a.ban_ts); return; }
+  if(s === "cool"){ showBlockModal(a, "cool", a.cool_ts); return; }
+  if(s === "busy"){ showBusyBlock(a); return; }
+  issueDraft[id] = ""; window._issueCopied = null; window._issueId = id;
+  openIssue(id);
+}
+function isBlocked(a){ var st = getStatus(a); return st === "ban" || st === "ban-perm" || st === "cool"; }
+function openIssue(id){
+  id = Number(id);
+  var a = getAccount(id); if(!a) return;
+  if(isBlocked(a)){ tryIssue(id); return; }
+  var s = getStatus(a);
+  var revealed = !!revealedPasswords[id];
+  var passDisplay = revealed ? (a.password || "—") : (a.password ? "••••••••" : "—");
+  var passClass = revealed ? "issue-value" : "issue-value masked";
+  var statusLbl = "";
+  if(s === "free") statusLbl = "<span class=\"pill p-free\">" + icoWrap(ICO.play) + " Свободен</span>";
+  else if(s === "cool"){ var rc = fmtRemaining(a.cool_ts - Date.now()); statusLbl = "<span class=\"pill p-cool\">" + icoWrap(ICO.clock) + " Кулдаун · " + rc + "</span>"; }
+  var html = "<div class=\"modal-bg\" onclick=\"if(event.target===this)closeIssue(" + id + ")\"><div class=\"modal\" onclick=\"event.stopPropagation()\">";
+  html += "<h2>" + icoWrap(ICO.play) + "Выдать аккаунт</h2>";
+  html += "<div class=\"issue-hero\">";
+  html += avatarHTML(a, "lg");
+  html += "<div class=\"issue-info\"><div class=\"issue-name\">" + esc(a.name||"Без имени") + "</div>";
+  html += "<div class=\"issue-status\">" + statusLbl + "</div></div></div>";
+  html += "<div class=\"issue-section\"><div class=\"issue-label\">Логин Steam</div>";
+  html += "<div class=\"issue-row\"><div class=\"issue-value\">" + esc(a.login || "— не указан —") + "</div>";
+  html += "<button class=\"issue-copy\" id=\"issue-btn-login\" onclick=\"copyIssueField(" + id + ",'login','issue-btn-login')\">" + icoWrap(ICO.copy) + " Копировать</button>";
+  html += "</div></div>";
+  html += "<div class=\"issue-section\"><div class=\"issue-label\">Пароль</div>";
+  html += "<div class=\"issue-row\"><div id=\"issue-pass\" class=\"" + passClass + "\">" + esc(passDisplay) + "</div>";
+  html += "<button id=\"issue-reveal\" class=\"issue-reveal\" onclick=\"toggleReveal(" + id + ")\">" + (revealed ? "🙈 Скрыть" : "👁 Показать") + "</button>";
+  html += "<button class=\"issue-copy\" id=\"issue-btn-pass\" onclick=\"copyIssueField(" + id + ",'pass','issue-btn-pass')\">" + icoWrap(ICO.copy) + " Копировать</button>";
+  html += "</div></div>";
+  html += "<div class=\"issue-hint\">" + icoWrap(ICO.info) + "<div>Скопируйте логин и пароль, затем вставьте в Steam. Буфер обмена очистится через 30 секунд.</div></div>";
+  html += "<div class=\"field\" style=\"margin-top:12px\"><label>Кому выдан (ПК / игрок)</label><input id=\"issue_to\" maxlength=\"40\" value=\"" + esc(issueDraft[id] || "") + "\" oninput=\"issueDraft[" + id + "]=this.value\"></div>";
+  html += "<div class=\"modal-actions\"><button class=\"btn btn-ghost\" onclick=\"closeIssue(" + id + ")\">Закрыть</button>";
+  html += "<button class=\"btn btn-success\" onclick=\"markBusy(" + id + ")\">" + icoWrap(ICO.check) + " Выдать</button></div>";
+  html += "</div></div>";
+  document.getElementById("modals").innerHTML = html;
+}
+function closeIssue(id){
+  var a = getAccount(id);
+  if(window._issueCopied === id && a && Number(a.busy) !== 1){
+    window._issueCopied = null;
+    confirmAction({title:"Данные скопированы", text:"Аккаунт «" + a.name + "» не отмечен занятым. Отметить?", ok:"Отметить занятым", no:"Не отмечать", cb:function(){ markBusy(id); }});
+    return;
+  }
+  delete issueDraft[id];
+  closeModal();
+}
+function markBusy(id){
+  if(tapGuard()) return;
+  id = Number(id);
+  var a = getAccount(id); if(!a) return;
+  var st = getStatus(a);
+  if(st === "busy"){ toast("Уже занят", "err"); return; }
+  if(st === "ban" || st === "ban-perm" || st === "cool"){ toast("Заблокирован", "err"); return; }
+  var to = String(issueDraft[id] || "").trim().slice(0, 40), at = new Date().toISOString();
+  a.busy = 1; a.busy_at = at; a.issued_to = to;
+  addLog("Выдан: " + a.name + (to ? " → " + to : ""), "ok", id);
+  persist();
+  window._issueCopied = null; delete issueDraft[id];
+  closeModal(); renderRoute(); vib("click");
+  toast("Аккаунт помечен занятым", "ok");
+}
+function releaseAccount(id){
+  if(tapGuard()) return;
+  id = Number(id);
+  var a = getAccount(id); if(!a) return;
+  a.busy = 0; a.busy_at = null; a.issued_to = "";
+  addLog("Освобождён: " + a.name, "info", id);
+  persist();
+  closeModal(); renderRoute(); vib("click");
+  toast("Аккаунт освобождён", "ok");
+}
+function showBusyBlock(a){
+  var html = "<div class=\"modal-bg\"><div class=\"alert-modal busy\" style=\"max-width:400px\">";
+  html += "<div class=\"icon\">" + icoWrap(ICO.phone) + "</div><h2>АККАУНТ ЗАНЯТ</h2>";
+  html += "<div class=\"info\"><div class=\"info-row\"><span class=\"lbl\">Аккаунт</span><span class=\"val\">" + esc(a.name||"") + "</span></div>";
+  if(a.issued_to) html += "<div class=\"info-row\"><span class=\"lbl\">Кому</span><span class=\"val\">" + esc(a.issued_to) + "</span></div>";
+  if(a.busy_at) html += "<div class=\"info-row\"><span class=\"lbl\">Занят с</span><span class=\"val\">" + esc(fmtSince(a.busy_at)) + "</span></div>";
+  html += "</div>";
+  html += "<div class=\"modal-actions\"><button class=\"btn btn-ghost\" onclick=\"closeModal()\">Понятно</button>";
+  html += "<button class=\"btn btn-danger\" onclick=\"closeModal();releaseAccount(" + a.id + ")\">" + icoWrap(ICO.unlock) + " Освободить</button></div></div></div>";
+  document.getElementById("modals").innerHTML = html;
+}
+function showBlockModal(a, kind, untilMs){
+  var isPerm = kind === "ban-perm"; var isBan = kind === "ban" || isPerm;
+  var cls = isBan ? "" : "warn"; var icon = isBan ? ICO.ban : ICO.clock;
+  var title = isPerm ? "ЗАБАНЕН НАВСЕГДА" : (isBan ? "АККАУНТ ПОД БАНОМ" : "КУЛДАУН CS2");
+  var reason = isBan ? a.ban_reason : a.cooldown_reason;
+  var untilISO = isBan ? a.ban_until : a.cooldown_until;
+  var html = "<div class=\"modal-bg\"><div class=\"alert-modal " + cls + "\">";
+  html += "<div class=\"icon\">" + icoWrap(icon) + "</div><h2>" + title + "</h2>";
+  html += "<div class=\"info\"><div class=\"info-row\"><span class=\"lbl\">Аккаунт</span><span class=\"val\">" + esc(a.name||"") + "</span></div>";
+  if(a.login) html += "<div class=\"info-row\"><span class=\"lbl\">Логин</span><span class=\"val\">" + esc(a.login) + "</span></div>";
+  html += "</div>";
+  if(!isPerm){
+    html += "<div class=\"info\"><div class=\"info-row\"><span class=\"lbl\">До</span><span class=\"val hl\">" + fmtDT(untilISO) + "</span></div>";
+    if(reason) html += "<div class=\"info-row\"><span class=\"lbl\">Причина</span><span class=\"val\">" + esc(reason) + "</span></div>";
+    html += "</div>";
+    html += "<div class=\"countdown " + (isBan ? "err" : "warn") + "\" id=\"cd_remaining\">Осталось: " + fmtRemaining(untilMs-Date.now()) + "</div>";
+  } else {
+    if(reason) html += "<div class=\"info\"><div class=\"info-row\"><span class=\"lbl\">Причина</span><span class=\"val err\">" + esc(reason) + "</span></div></div>";
+    html += "<div class=\"info\" style=\"background:rgba(224,92,92,0.08);border:1px solid rgba(224,92,92,0.15)\"><div style=\"font-size:13px;color:var(--err);text-align:center;line-height:1.5\">Бан бессрочный.<br>Снять можно только вручную.</div></div>";
+  }
+  html += "<div class=\"issue-hint\" style=\"margin-bottom:10px\">" + icoWrap(ICO.ban) + "<div>Выдача заблокирована.</div></div>";
+  html += "<div class=\"modal-actions\"><button class=\"btn btn-ghost\" onclick=\"openBlock(" + a.id + ")\">Управление</button><button class=\"btn btn-primary\" onclick=\"closeModal()\">Понятно</button></div>";
+  html += "</div></div>";
+  document.getElementById("modals").innerHTML = html;
+  if(!isPerm && untilMs){
+    stopCountdown();
+    window._cdTimer = setInterval(function(){
+      var e = document.getElementById("cd_remaining");
+      if(!e){ clearInterval(window._cdTimer); window._cdTimer = null; return; }
+      var left = untilMs - Date.now();
+      if(left <= 0){ clearInterval(window._cdTimer); window._cdTimer = null; e.textContent = "Истекло"; refreshNow(); return; }
+      e.textContent = "Осталось: " + fmtRemaining(left);
+    }, 1000);
+  }
+}
+
+/* ============================================================
+ * Категории
+ * ============================================================ */
+
+function createCategory(name){
+  name = String(name == null ? "" : name).trim().slice(0, 80);
+  if(!name){ toast("Введите имя категории", "err"); return null; }
+  var low = name.toLowerCase();
+  var dup = categories.filter(function(c){ return String(c.name||"").toLowerCase() === low; })[0];
+  if(dup){ toast("Категория с таким именем уже есть", "err"); return null; }
+  var nid = 0; categories.forEach(function(c){ if(c.id >= nid) nid = c.id+1; });
+  if(nid === 0) nid = 1;
+  var c = { id: nid, name: name, created_at: new Date().toISOString() };
+  categories.push(c);
+  persistCategories();
+  addLog("Категория создана: " + name, "info");
+  return c;
+}
+
+function renameCategory(id, newName){
+  id = Number(id);
+  newName = String(newName == null ? "" : newName).trim().slice(0, 80);
+  if(!newName){ toast("Введите имя категории", "err"); return false; }
+  var cat = getCategory(id);
+  if(!cat){ toast("Категория не найдена", "err"); return false; }
+  var low = newName.toLowerCase();
+  var dup = categories.filter(function(c){ return c.id !== id && String(c.name||"").toLowerCase() === low; })[0];
+  if(dup){ toast("Категория с таким именем уже есть", "err"); return false; }
+  var oldName = cat.name;
+  cat.name = newName;
+  persistCategories();
+  addLog("Категория переименована: " + oldName + " → " + newName, "info");
+  return true;
+}
+
+function deleteCategory(id){
+  id = Number(id);
+  var cat = getCategory(id);
+  if(!cat){ toast("Категория не найдена", "err"); return false; }
+  confirmAction({
+    title: "Удалить категорию?",
+    text: "Категория «" + cat.name + "» будет удалена. Аккаунты останутся, но потеряют категорию. Продолжить?",
+    ok: "Удалить",
+    cb: function(){
+      categories = categories.filter(function(c){ return c.id !== id; });
+      accounts.forEach(function(a){ if(a.category_id === id) a.category_id = null; });
+      persistCategories();
+      persist();
+      rebuildAccountIndex();
+      if(String(currentCategoryFilter) === String(id)) currentCategoryFilter = "all";
+      addLog("Категория удалена: " + cat.name, "warn");
+      renderRoute();
+      toast("Категория удалена", "ok");
+    }
+  });
+  return true;
+}
+
+function openCategoryManager(){
+  var html = "<div class=\"modal-bg\" onclick=\"if(event.target===this)closeModal()\"><div class=\"modal\" onclick=\"event.stopPropagation()\">";
+  html += "<h2>" + icoWrap(ICO.folder) + "Категории</h2>";
+
+  html += "<div class=\"field\"><label>Новая категория</label>";
+  html += "<input id=\"cat_new_name\" type=\"text\" maxlength=\"80\" placeholder=\"Например: VIP\">";
+  html += "<button class=\"btn btn-primary\" style=\"margin-top:8px;width:100%\" onclick=\"addCategoryFromForm()\">" + icoWrap(ICO.check) + " Добавить</button>";
+  html += "</div>";
+
+  var sorted = categories.slice().sort(function(a,b){ return (a.name||"").localeCompare(b.name||"","ru"); });
+  if(sorted.length === 0){
+    html += "<div class=\"empty\" style=\"padding:24px 20px\"><span class=\"ico-empty\">" + ICO.folder + "</span><div>Пока нет категорий. Создайте первую.</div></div>";
+  } else {
+    html += "<div class=\"field\"><label>Существующие</label>";
+    sorted.forEach(function(c){
+      var cnt = accounts.filter(function(a){ return a.category_id === c.id; }).length;
+      html += "<div class=\"card\" data-cid=\"" + c.id + "\" style=\"margin-bottom:8px\">";
+      html += "<div class=\"card-head\" style=\"margin-bottom:6px\">";
+      html += "<input class=\"input inline\" id=\"cat_name_" + c.id + "\" type=\"text\" maxlength=\"80\" value=\"" + esc(c.name) + "\" style=\"font-weight:700\">";
+      html += "</div>";
+      html += "<div class=\"muted3\" style=\"margin-bottom:8px\">Аккаунтов: " + cnt + "</div>";
+      html += "<div class=\"row tight\">";
+      html += "<button class=\"btn btn-sm btn-ghost\" onclick=\"saveCategoryName(" + c.id + ")\">" + icoWrap(ICO.check) + " Сохранить</button>";
+      html += "<button class=\"btn btn-sm btn-danger\" onclick=\"deleteCategory(" + c.id + ")\">" + icoWrap(ICO.trash) + " Удалить</button>";
+      html += "</div>";
+      html += "</div>";
+    });
+    html += "</div>";
+  }
+
+  html += "<div class=\"modal-actions\"><button class=\"btn btn-primary\" onclick=\"closeModal()\">Закрыть</button></div>";
+  html += "</div></div>";
+  document.getElementById("modals").innerHTML = html;
+}
+
+function addCategoryFromForm(){
+  var el = document.getElementById("cat_new_name");
+  if(!el) return;
+  var name = el.value;
+  if(createCategory(name)){
+    renderRoute();
+    openCategoryManager();
+    toast("Категория создана", "ok");
+  }
+}
+
+function saveCategoryName(id){
+  var el = document.getElementById("cat_name_" + id);
+  if(!el) return;
+  if(renameCategory(id, el.value)){
+    renderRoute();
+    openCategoryManager();
+    toast("Категория переименована", "ok");
+  }
+}
 
 /* ============================================================
  * Инициализация
@@ -2093,22 +2625,31 @@ function init(){
   var ui = lsGetJson("ui", {});
   if(ui && ui.categoryFilter) currentCategoryFilter = String(ui.categoryFilter);
 
-  loadCategories();
+  var h = (location.hash || "").replace(/^#/, "");
+  if(h === "accounts" || h === "cash" || h === "history" || h === "settings"){
+    currentRoute = h;
+  } else if(ui && (ui.route === "accounts" || ui.route === "cash" || ui.route === "history" || ui.route === "settings")){
+    currentRoute = ui.route;
+  } else {
+    currentRoute = "accounts";
+  }
 
+  loadCategories();
   if(currentCategoryFilter !== "all" && currentCategoryFilter !== "none"){
     var still = categories.some(function(c){ return String(c.id) === currentCategoryFilter; });
     if(!still) currentCategoryFilter = "all";
   }
-
+  loadShifts();
   loadActionLog();
   loadLastExport();
   loadAccounts();
   _dataRev = Number(lsGet("data_rev") || 0) || 0;
+
   buildApp();
-  renderList();
   startRefreshLoop();
   scheduleExpireCheck();
   maybeRemindBackup();
+  renderHintsBar();
 }
 
 init();
